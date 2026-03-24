@@ -227,8 +227,8 @@ public:
 	BVHNode* l;
 	// This can store an offset and number of triangles in a global triangle list for example
 	// But you can store this however you want!
-	// unsigned int offset;
-	// unsigned char num;
+	unsigned int offset;
+	unsigned char num;
 	BVHNode()
 	{
 		r = NULL;
@@ -239,13 +239,59 @@ public:
 	{
 		// marks for getting the BVH working and then more marks for it to be better (impress tom, get more marks)
 		// Add BVH building code here
+		this->bounds.reset();
+		int axis;
+		for (int i = 0; i < inputTriangles.size(); i++) {
+			this->bounds.extend(inputTriangles[i].vertices[0].p);
+			this->bounds.extend(inputTriangles[i].vertices[1].p);
+			this->bounds.extend(inputTriangles[i].vertices[2].p);
+		}
 
+		if (inputTriangles.size() <= MAXNODE_TRIANGLES) {
+			// if true = leaf
+			this->offset = outputTriangles.size();				
+			this->num = inputTriangles.size();
+			for (int j = 0; j < inputTriangles.size(); j++) {
+				outputTriangles.push_back(inputTriangles[j]);
+			}
+			return;
+		}
+		else if (inputTriangles.size() >= MAXNODE_TRIANGLES) {
+			Vec3 size = this->bounds.max - this->bounds.min;
 
+			if (size.x > size.y && size.x > size.z) {
+				axis = 0;
+			}
+			else if (size.y > size.x && size.y > size.z) {
+				axis = 1;
+			}
+			else {
+				axis = 2;
+			}
+		}
+
+		std::sort(inputTriangles.begin(), inputTriangles.end(), [axis](const Triangle& a, const Triangle& b) {
+			Vec3 centerA = a.centre();
+			Vec3 centerB = b.centre();
+			if (axis == 0) return centerA.x < centerB.x;
+			if (axis == 1) return centerA.y < centerB.y;
+			return centerA.z < centerB.z;
+		});
+
+		size_t mid = inputTriangles.size() / 2;
+		std::vector<Triangle> leftTriangles(inputTriangles.begin(), inputTriangles.begin() + mid);
+		std::vector<Triangle> rightTriangles(inputTriangles.begin() + mid, inputTriangles.end());
+
+		this->l = new BVHNode();
+		this->r = new BVHNode();
+		this->l->build(leftTriangles, outputTriangles);
+		this->r->build(rightTriangles, outputTriangles);
 	}
 	void traverse(const Ray& ray, const std::vector<Triangle>& triangles, IntersectionData& intersection)
 	{
 		// marks for getting the BVH working and then more marks for it to be better (impress tom, get more marks)
 		// Add BVH Traversal code here
+
 	}
 	IntersectionData traverse(const Ray& ray, const std::vector<Triangle>& triangles)
 	{

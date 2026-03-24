@@ -180,25 +180,19 @@ public:
 				}
 			}
 		}
-
-		for (int i = 0; i < used; i++) {
-			film[indices[i]] = film[indices[i]] + (L * filterWeights[i] / total);
+		if (total > 0.0f) {
+			for (int i = 0; i < used; i++) {
+				film[indices[i]] = film[indices[i]] + (L * filterWeights[i] / total);
+			}
 		}
-		
-	
 	}
 	void tonemap(int x, int y, unsigned char& r, unsigned char& g, unsigned char& b, float exposure = 1.0f)
 	{
-		// Return a tonemapped pixel at coordinates x, y, linear with gamma and exposure, Imaging slides, slide 51/85
 		Colour c = film[y * width + x] / (float)SPP;
-
-		// Applies exposure to all colours, 2^e
-		float exposureScale = powf(2.0f, exposure);
 		float inRed = std::max(c.r, 0.f) * exposure;
 		float inGreen = std::max(c.g, 0.f) * exposure;
 		float inBlue = std::max(c.b, 0.f) * exposure;
 
-		// Applies gamma correction - transforms linear light to monitor-space
 		float inverseGamma = 1.0f / 2.2f;
 		float outRed = powf(inRed, inverseGamma);
 		float outGreen = powf(inGreen, inverseGamma);
@@ -207,9 +201,6 @@ public:
 		r = (unsigned char)(outRed * 255.0f);
 		g = (unsigned char)(outGreen * 255.0f);
 		b = (unsigned char)(outBlue * 255.0f);
-		//g = (unsigned char)(std::min((outGreen * 255.0f), 255.0f));
-		//b = (unsigned char)(std::min((outBlue * 255.0f), 255.0f));
-
 	}
 	// Do not change any code below this line
 	void init(int _width, int _height, ImageFilter* _filter)
