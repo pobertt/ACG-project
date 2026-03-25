@@ -129,7 +129,20 @@ public:
 	// Add code here
 	Vec3 sample(Sampler* sampler, float& pdf)
 	{
-		return Vec3(0, 0, 0);
+		// Implement uniformly sampling triangle area (monte carlo slides)
+		float r1 = sampler->next();
+		float r2 = sampler->next();
+
+		float sqrtR1 = sqrtf(r1);
+		float u = 1.0f - sqrtR1;
+		float v = r2 * sqrtR1;
+		float w = 1.0f - (u + v);
+
+		Vec3 point = (vertices[0].p * w) + (vertices[1].p * u) + (vertices[2].p * v);
+
+		pdf = 1.0f / area;
+
+		return point;
 	}
 	Vec3 gNormal()
 	{
@@ -291,7 +304,28 @@ public:
 	{
 		// marks for getting the BVH working and then more marks for it to be better (impress tom, get more marks)
 		// Add BVH Traversal code here
-
+		float t;
+		if (!this->bounds.rayAABB(ray, t) || t >= intersection.t) {
+			return;
+		}
+		else {
+			if (this->l == NULL && this->r == NULL) {
+				for (int i = this->offset; i < this->offset + this->num; i++) {
+					float triT, u, v;
+					if (triangles[i].rayIntersect(ray, triT, u, v) && triT < intersection.t) {
+						intersection.t = triT;
+						intersection.ID = i;
+						intersection.alpha = u; 
+						intersection.beta = v; 
+						intersection.gamma = 1.0f - (u + v);
+					}
+				}
+			}
+			else {
+				this->l->traverse(ray, triangles, intersection);
+				this->r->traverse(ray, triangles, intersection);
+			}
+		}
 	}
 	IntersectionData traverse(const Ray& ray, const std::vector<Triangle>& triangles)
 	{

@@ -84,14 +84,14 @@ public:
 	void build()
 	{
 		// Add BVH building code here
-		/*std::vector<Triangle> inputTriangles;
+		std::vector<Triangle> inputTriangles;
 		for (int i = 0; i < triangles.size(); i++)
 		{
 			inputTriangles.push_back(triangles[i]);
 		}
 		triangles.clear();
 		bvh = new BVHNode();
-		bvh->build(inputTriangles, triangles);*/
+		bvh->build(inputTriangles, triangles);
 		
 		// Do not touch the code below this line!
 		// Build light list
@@ -110,6 +110,7 @@ public:
 	{
 		IntersectionData intersection;
 		intersection.t = FLT_MAX;
+		/*
 		for (int i = 0; i < triangles.size(); i++)
 		{
 			float t;
@@ -127,11 +128,14 @@ public:
 				}
 			}
 		}
+		return intersection;*/
+		bvh->traverse(ray, triangles, intersection);
 		return intersection;
 	}
 	Light* sampleLight(Sampler* sampler, float& pmf)
 	{
-		return NULL;
+		pmf = 1.0f / lights.size();
+		return lights[(int)(sampler->next() * lights.size())];
 	}
 	// Do not modify any code below this line
 	void init(std::vector<Triangle> meshTriangles, std::vector<BSDF*> meshMaterials, Light* _background)

@@ -189,18 +189,22 @@ public:
 	void tonemap(int x, int y, unsigned char& r, unsigned char& g, unsigned char& b, float exposure = 1.0f)
 	{
 		Colour c = film[y * width + x] / (float)SPP;
-		float inRed = std::max(c.r, 0.f) * exposure;
+	/*	float inRed = std::max(c.r, 0.f) * exposure;
 		float inGreen = std::max(c.g, 0.f) * exposure;
 		float inBlue = std::max(c.b, 0.f) * exposure;
 
 		float inverseGamma = 1.0f / 2.2f;
 		float outRed = powf(inRed, inverseGamma);
 		float outGreen = powf(inGreen, inverseGamma);
-		float outBlue = powf(inBlue, inverseGamma);
+		float outBlue = powf(inBlue, inverseGamma);*/
 
-		r = (unsigned char)(outRed * 255.0f);
+		/*r = (unsigned char)(outRed * 255.0f);
 		g = (unsigned char)(outGreen * 255.0f);
-		b = (unsigned char)(outBlue * 255.0f);
+		b = (unsigned char)(outBlue * 255.0f);*/
+
+		r = std::min(powf(std::max(c.r, 0.0f), 1.0f / 2.2f) * 255, 255.0f);
+		g = std::min(powf(std::max(c.g, 0.0f), 1.0f / 2.2f) * 255, 255.0f);
+		b = std::min(powf(std::max(c.b, 0.0f), 1.0f / 2.2f) * 255, 255.0f);
 	}
 	// Do not change any code below this line
 	void init(int _width, int _height, ImageFilter* _filter)

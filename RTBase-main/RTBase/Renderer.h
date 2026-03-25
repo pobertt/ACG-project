@@ -45,7 +45,46 @@ public:
 			return Colour(0.0f, 0.0f, 0.0f);
 		}
 		// Compute direct lighting here
-		return Colour(0.0f, 0.0f, 0.0f);
+		float pmf;
+		Light* light = scene->sampleLight(sampler, pmf);
+
+		if (light == NULL || pmf <= 0.0f) { return Colour(0.0f, 0.0f, 0.0f); }
+
+		Colour emittedColour;
+		float pdf;
+		Vec3 sampleVec = light->sample(shadingData, sampler, emittedColour, pdf);
+
+		if (pdf <= 0.0f) { return Colour(0.0f, 0.0f, 0.0f); }
+
+		Vec3 wi = sampleVec - shadingData.x;
+		float distance = wi.length();
+		wi = wi.normalize();
+
+		if (!scene->visible(shadingData.x, sampleVec)) { return Colour(0.0f, 0.0f, 0.0f); };
+
+		float cosThetaOut = Dot(shadingData.sNormal, wi);
+		float g = 0.0f;
+
+		if (light->isArea()) {
+			AreaLight* areaLight = (AreaLight*)light;
+			Vec3 lightNormal = areaLight->triangle->gNormal();
+			float cosThetaLight = Dot(lightNormal, -wi);
+			
+			if (cosThetaOut > 0 && cosThetaLight > 0) {
+				g = (cosThetaOut * cosThetaLight) / (distance * distance);
+			}
+		}
+		else {
+			if (cosThetaOut > 0.0f) {
+				g = cosThetaOut;
+			}
+		}
+		if (g < 0.0f) {
+			return Colour(0.0f, 0.0f, 0.0f);
+		}
+
+		Colour f = shadingData.bsdf->evaluate(shadingData, wi);
+		return (emittedColour * f * g) / (pdf * pmf);
 	}
 	Colour pathTrace(Ray& r, Colour& pathThroughput, int depth, Sampler* sampler)
 	{
@@ -54,8 +93,17 @@ public:
 	}
 	Colour direct(Ray& r, Sampler* sampler)
 	{
-		// Compute direct lighting for an image sampler here
-		return Colour(0.0f, 0.0f, 0.0f);
+		IntersectionData intersection = scene->traverse(r);
+		ShadingData shadingData = scene->calculateShadingData(intersection, r);
+		if (shadingData.t < FLT_MAX)
+		{
+			if (shadingData.bsdf->isLight())
+			{
+				return shadingData.bsdf->emit(shadingData, shadingData.wo);
+			}
+			return computeDirect(shadingData, sampler);
+		}
+		return scene->background->evaluate(r.dir);
 	}
 	Colour albedo(Ray& r)
 	{
@@ -83,18 +131,20 @@ public:
 	}
 	void render()
 	{
+		// Add multi-threading here for the kitchen scene
 		film->incrementSPP();
 		for (int y = 0; y < film->height; y++) {
 			for (int x = 0; x < film->width; x++) {
 				float px = x + 0.5f;
 				float py = y + 0.5f;
 				Ray ray = scene->camera.generateRay(px, py);
-				Colour col = viewNormals(ray);
+				//Colour col = viewNormals(ray);
+				Colour col = direct(ray, &samplers[0]);
 				//Colour col = albedo(ray);
 				
 				film->splat(px, py, col);
 				unsigned char r, g, b;
-				film->tonemap(x, y, r, g, b, 15.0f);
+				film->tonemap(x, y, r, g, b, 1.0f);
 				canvas->draw(x, y, r, g, b);
 			}
 		}
