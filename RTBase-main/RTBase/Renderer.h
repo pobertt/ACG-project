@@ -112,7 +112,9 @@ public:
 
 		pathThroughput = pathThroughput / survivalProb;
 
-		/*Colour nextColour;
+		/*
+		without uniform sampling
+		Colour nextColour;
 		float pdf;
 		Vec3 nextDir = shadingData.bsdf->sample(shadingData, sampler, nextColour, pdf);
 
@@ -133,9 +135,14 @@ public:
 		float r1 = sampler->next();
 		float r2 = sampler->next();
 
-		Vec3 localDir = SamplingDistributions::uniformSampleHemisphere(r1, r2);
+		//Vec3 localDir = SamplingDistributions::uniformSampleHemisphere(r1, r2);
+		//Vec3 nextDir = shadingData.frame.toWorld(localDir);
+		//float pdf = SamplingDistributions::uniformHemispherePDF(localDir);
+
+		// Variance Reduction
+		Vec3 localDir = SamplingDistributions::cosineSampleHemisphere(r1, r2);
 		Vec3 nextDir = shadingData.frame.toWorld(localDir);
-		float pdf = SamplingDistributions::uniformHemispherePDF(localDir);
+		float pdf = SamplingDistributions::cosineHemispherePDF(localDir);
 		
 		Colour f = shadingData.bsdf->evaluate(shadingData, nextDir);
 		float cosTheta = Dot(shadingData.sNormal, nextDir);
