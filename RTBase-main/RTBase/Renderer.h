@@ -88,8 +88,46 @@ public:
 	}
 	Colour pathTrace(Ray& r, Colour& pathThroughput, int depth, Sampler* sampler)
 	{
-		// Add pathtracer code here
-		return Colour(0.0f, 0.0f, 0.0f);
+		IntersectionData intersection = scene->traverse(r);
+		ShadingData shadingData = scene->calculateShadingData(intersection, r);
+
+		if (intersection.t >= FLT_MAX) {
+			if (scene->background != NULL) {
+				Colour sky = scene->background->evaluate(r.dir);
+				return sky * pathThroughput;
+			}
+			return Colour(0.0f, 0.0f, 0.0f);
+		}
+
+		if (shadingData.bsdf->isLight()) {
+			return shadingData.bsdf->emit(shadingData, shadingData.wo) * pathThroughput;
+		}
+
+		Colour directLight = computeDirect(shadingData, sampler);
+		directLight = directLight * pathThroughput;
+
+		float survivalProb = std::max(pathThroughput.r, std::max(pathThroughput.g, pathThroughput.b));
+		float px = sampler->next();
+		if (px > survivalProb) { return directLight; }
+
+		pathThroughput = pathThroughput / survivalProb;
+
+		Colour nextColour;
+		float pdf;
+		Vec3 nextDir = shadingData.bsdf->sample(shadingData, sampler, nextColour, pdf);
+
+		if (pdf <= 0.0f) { return directLight; }
+		Colour f = shadingData.bsdf->evaluate(shadingData, nextDir);
+		
+		float cosTheta = Dot(shadingData.sNormal, nextDir);
+		if (cosTheta <= 0.0f) { return directLight; }
+
+		pathThroughput = pathThroughput * (f * cosTheta) / pdf;
+
+		Ray nextRay(shadingData.x + (nextDir * EPSILON), nextDir);
+		Colour indirectLight = pathTrace(nextRay, pathThroughput, depth + 1, sampler);
+
+		return directLight + indirectLight;
 	}
 	Colour direct(Ray& r, Sampler* sampler)
 	{
@@ -139,9 +177,13 @@ public:
 				float py = y + 0.5f;
 				Ray ray = scene->camera.generateRay(px, py);
 				//Colour col = viewNormals(ray);
-				Colour col = direct(ray, &samplers[0]);
-				//Colour col = albedo(ray);
 				
+				//Colour col = albedo(ray);
+				//Colour col = direct(ray, &samplers[0]);
+
+				Colour startingThroughput(1.0f, 1.0f, 1.0f);
+				Colour col = pathTrace(ray, startingThroughput, 0, &samplers[0]);
+
 				film->splat(px, py, col);
 				unsigned char r, g, b;
 				film->tonemap(x, y, r, g, b, 1.0f);
