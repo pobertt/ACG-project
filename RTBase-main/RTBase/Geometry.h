@@ -132,7 +132,6 @@ public:
 		// Implement uniformly sampling triangle area (monte carlo slides)
 		float r1 = sampler->next();
 		float r2 = sampler->next();
-
 		float sqrtR1 = sqrtf(r1);
 		float u = 1.0f - sqrtR1;
 		float v = r2 * sqrtR1;

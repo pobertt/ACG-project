@@ -112,10 +112,11 @@ public:
 
 		pathThroughput = pathThroughput / survivalProb;
 
-		Colour nextColour;
+		/*Colour nextColour;
 		float pdf;
 		Vec3 nextDir = shadingData.bsdf->sample(shadingData, sampler, nextColour, pdf);
 
+		nextDir = shadingData.frame.toWorld(nextDir);
 		if (pdf <= 0.0f) { return directLight; }
 		Colour f = shadingData.bsdf->evaluate(shadingData, nextDir);
 		
@@ -124,10 +125,29 @@ public:
 
 		pathThroughput = pathThroughput * (f * cosTheta) / pdf;
 
-		Ray nextRay(shadingData.x + (nextDir * EPSILON), nextDir);
+		Ray nextRay(shadingData.x + (shadingData.sNormal * EPSILON), nextDir);
+		Colour indirectLight = pathTrace(nextRay, pathThroughput, depth + 1, sampler);
+
+		return directLight + indirectLight;*/
+
+		float r1 = sampler->next();
+		float r2 = sampler->next();
+
+		Vec3 localDir = SamplingDistributions::uniformSampleHemisphere(r1, r2);
+		Vec3 nextDir = shadingData.frame.toWorld(localDir);
+		float pdf = SamplingDistributions::uniformHemispherePDF(localDir);
+		
+		Colour f = shadingData.bsdf->evaluate(shadingData, nextDir);
+		float cosTheta = Dot(shadingData.sNormal, nextDir);
+		if (cosTheta <= 0.0f) { return directLight; }
+
+		pathThroughput = pathThroughput * (f * cosTheta) / pdf;
+
+		Ray nextRay(shadingData.x + (shadingData.sNormal * EPSILON), nextDir);
 		Colour indirectLight = pathTrace(nextRay, pathThroughput, depth + 1, sampler);
 
 		return directLight + indirectLight;
+
 	}
 	Colour direct(Ray& r, Sampler* sampler)
 	{
