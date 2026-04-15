@@ -98,11 +98,20 @@ public:
 	Vec3 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf)
 	{
 		// Add correct sampling code here
-		Vec3 wi = Vec3(0, 1, 0);
+		/*Vec3 wi = Vec3(0, 1, 0);
 		pdf = 1.0f;
 		reflectedColour = albedo->sample(shadingData.tu, shadingData.tv) / M_PI;
-		wi = shadingData.frame.toWorld(wi);
-		return wi;
+		wi = shadingData.frame.toWorld(wi);*/
+		//return wi;
+
+		float r1 = sampler->next();
+		float r2 = sampler->next();
+		Vec3 local_space = SamplingDistributions::cosineSampleHemisphere(r1, r2);
+		Vec3 world_space = shadingData.frame.toWorld(local_space);
+		pdf = PDF(shadingData, world_space);
+		reflectedColour = evaluate(shadingData, world_space);
+
+		return world_space;
 	}
 	Colour evaluate(const ShadingData& shadingData, const Vec3& wi)
 	{
@@ -111,7 +120,21 @@ public:
 	float PDF(const ShadingData& shadingData, const Vec3& wi)
 	{
 		// Add correct PDF code here
-		return 1.0f;
+		/*float cosTheta = Dot(shadingData.sNormal, wi);
+		if (cosTheta <= 0.0) {
+			return 0.0f;
+		}
+		float pdf = cosTheta / M_PI;
+		return pdf;*/
+
+		Vec3 wiLocal = shadingData.frame.toLocal(wi);  // Local to world
+
+		if (wiLocal.z <= 0.0f)
+		{
+			return 0.0f;
+		}
+
+		return wiLocal.z / M_PI;
 	}
 	bool isPureSpecular()
 	{
@@ -136,25 +159,74 @@ public:
 	{
 		albedo = _albedo;
 	}
+	//Vec3 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf)
+	//{
+	//	//// Replace this with Mirror sampling code
+	//	//Vec3 wi = SamplingDistributions::cosineSampleHemisphere(sampler->next(), sampler->next());
+	//	//pdf = wi.z / M_PI;
+	//	//reflectedColour = albedo->sample(shadingData.tu, shadingData.tv) / M_PI;
+	//	//wi = shadingData.frame.toWorld(wi);
+	//	//return wi;
+
+	//	Vec3 local_wo = shadingData.frame.toLocal(shadingData.wo);
+	//	Vec3 local_wi;
+	//	local_wi.x = -local_wo.x;
+	//	local_wi.y = -local_wo.y;
+	//	local_wi.z = local_wo.z;
+
+	//	Vec3 world_wi = shadingData.frame.toWorld(local_wi);
+	//	pdf = 1.0f;
+	//	Colour mirror_albedo(1.0f, 1.0f, 1.0f);
+	//	float safe_z = std::max(0.0001f, local_wi.z);
+	//	reflectedColour = mirror_albedo / safe_z;
+
+	//	float cosTheta = local_wi.z;
+	//	if (cosTheta <= 0.0001f) {
+	//		reflectedColour = Colour(0, 0, 0);
+	//		pdf = 1.0f; // Keep PDF at 1 to avoid division by zero
+	//	}
+	//	else {
+	//		// Standard white mirror albedo, or use albedo->sample(...)
+	//		Colour mirror_albedo(1.0f, 1.0f, 1.0f);
+	//		reflectedColour = mirror_albedo / cosTheta;
+	//		pdf = 1.0f;
+	//	}
+
+	//	return world_wi;
+	//}
 	Vec3 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf)
 	{
 		// Replace this with Mirror sampling code
-		Vec3 wi = SamplingDistributions::cosineSampleHemisphere(sampler->next(), sampler->next());
-		pdf = wi.z / M_PI;
-		reflectedColour = albedo->sample(shadingData.tu, shadingData.tv) / M_PI;
-		wi = shadingData.frame.toWorld(wi);
-		return wi;
+		Vec3 local_wo = shadingData.frame.toLocal(shadingData.wo);
+
+		// Perfect reflection in local space
+		Vec3 local_wi = Vec3(-local_wo.x, -local_wo.y, local_wo.z);
+
+		pdf = 1.0f;
+		float cosTheta = local_wi.z;
+
+		if (cosTheta <= 0.0001f) {
+			reflectedColour = Colour(0, 0, 0);
+		}
+		else {
+			Colour mirror_albedo(1.0f, 1.0f, 1.0f);
+			reflectedColour = mirror_albedo / cosTheta;
+		}
+
+		return shadingData.frame.toWorld(local_wi);
 	}
 	Colour evaluate(const ShadingData& shadingData, const Vec3& wi)
 	{
 		// Replace this with Mirror evaluation code
-		return albedo->sample(shadingData.tu, shadingData.tv) / M_PI;
+		/*return albedo->sample(shadingData.tu, shadingData.tv) / M_PI;*/
+		return Colour(0.0f, 0.0f, 0.0f);
 	}
 	float PDF(const ShadingData& shadingData, const Vec3& wi)
 	{
 		// Replace this with Mirror PDF
-		Vec3 wiLocal = shadingData.frame.toLocal(wi);
-		return SamplingDistributions::cosineHemispherePDF(wiLocal);
+		/*Vec3 wiLocal = shadingData.frame.toLocal(wi);
+		return SamplingDistributions::cosineHemispherePDF(wiLocal);*/
+		return 0.0f;
 	}
 	bool isPureSpecular()
 	{

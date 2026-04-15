@@ -71,7 +71,8 @@ public:
 			float cosThetaLight = Dot(lightNormal, -wi);
 			
 			if (cosThetaOut > 0 && cosThetaLight > 0) {
-				g = (cosThetaOut * cosThetaLight) / (distance * distance);
+				float distSquared = std::max(0.01f, distance * distance);
+				g = (cosThetaOut * cosThetaLight) / distSquared;
 			}
 		}
 		else {
@@ -90,6 +91,10 @@ public:
 	{
 		IntersectionData intersection = scene->traverse(r);
 		ShadingData shadingData = scene->calculateShadingData(intersection, r);
+
+		if (depth > 64) {
+			return Colour(0.0f, 0.0f, 0.0f);
+		}
 
 		if (intersection.t >= FLT_MAX) {
 			if (scene->background != NULL) {
@@ -140,15 +145,33 @@ public:
 		//float pdf = SamplingDistributions::uniformHemispherePDF(localDir);
 
 		// Variance Reduction
-		Vec3 localDir = SamplingDistributions::cosineSampleHemisphere(r1, r2);
+		/*Vec3 localDir = SamplingDistributions::cosineSampleHemisphere(r1, r2);
 		Vec3 nextDir = shadingData.frame.toWorld(localDir);
-		float pdf = SamplingDistributions::cosineHemispherePDF(localDir);
-		
-		Colour f = shadingData.bsdf->evaluate(shadingData, nextDir);
+		float pdf = SamplingDistributions::cosineHemispherePDF(localDir);*/
+
+		// For materials:
+		Colour indirect;
+		float pdf;
+		Vec3 nextDir = shadingData.bsdf->sample(shadingData, sampler, indirect, pdf);
+		Colour f;
+
+
 		float cosTheta = Dot(shadingData.sNormal, nextDir);
+
+		if (shadingData.bsdf->isPureSpecular()) {
+			// mirrors
+			pathThroughput = pathThroughput * (indirect * cosTheta) / pdf;
+		}
+		else {
+			// diffuse
+			if (cosTheta <= 0.0f) return directLight;
+			f = shadingData.bsdf->evaluate(shadingData, nextDir);
+			pathThroughput = pathThroughput * (f * cosTheta) / pdf;
+		}
+
 		if (cosTheta <= 0.0f) { return directLight; }
 
-		pathThroughput = pathThroughput * (f * cosTheta) / pdf;
+		//pathThroughput = pathThroughput * (f * cosTheta) / pdf;
 
 		Ray nextRay(shadingData.x + (shadingData.sNormal * EPSILON), nextDir);
 		Colour indirectLight = pathTrace(nextRay, pathThroughput, depth + 1, sampler);
@@ -218,6 +241,51 @@ public:
 			}
 		}
 	}
+	void renderMT()
+	{
+		int threadsToUse = numProcs;
+		int scanlinesPerThread = film->height / threadsToUse;
+
+		film->incrementSPP();
+
+		for (int i = 0; i < threadsToUse; ++i)
+		{
+			int startY = i * scanlinesPerThread;
+			int endY = (i == threadsToUse - 1) ? film->height : startY + scanlinesPerThread;
+
+			threads[i] = new std::thread([this, startY, endY, i]() {
+
+				for (int y = startY; y < endY; ++y) {
+					for (int x = 0; x < film->width; ++x) {
+
+						float px = x + 0.5f;
+						float py = y + 0.5f;
+						Ray ray = scene->camera.generateRay(px, py);
+
+						Colour startingThroughput(1.0f, 1.0f, 1.0f);
+						Colour col = pathTrace(ray, startingThroughput, 0, &samplers[i]);
+						//Colour col = direct(ray, &samplers[i]);
+
+						film->splat(px, py, col);
+					}
+				}
+				});
+		}
+
+		for (int i = 0; i < threadsToUse; ++i) {
+			threads[i]->join();
+			delete threads[i];
+		}
+
+		for (int y = 0; y < film->height; ++y) {
+			for (int x = 0; x < film->width; ++x) {
+				unsigned char r, g, b;
+				film->tonemap(x, y, r, g, b, 0.05f);
+				canvas->draw(x, y, r, g, b);
+			}
+		}
+	}
+
 	int getSPP()
 	{
 		return film->SPP;

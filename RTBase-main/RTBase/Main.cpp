@@ -55,7 +55,7 @@ int main(int argc, char *argv[])
 	runTests();
 	
 	// Initialize default parameters "kitchen" or "cornell-box"
-	std::string sceneName = "cornell-box";
+	std::string sceneName = "bathroom";
 	std::string filename = "GI.hdr";
 	unsigned int SPP = 8192;
 
@@ -144,7 +144,7 @@ int main(int argc, char *argv[])
 		}
 		// Time how long a render call takes
 		timer.reset();
-		rt.render();
+		rt.renderMT();
 		float t = timer.dt();
 		// Write
 		std::cout << t << std::endl;
