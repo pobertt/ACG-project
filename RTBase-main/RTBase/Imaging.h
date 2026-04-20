@@ -186,6 +186,7 @@ public:
 			}
 		}
 	}
+
 	void tonemap(int x, int y, unsigned char& r, unsigned char& g, unsigned char& b, float exposure = 1.0f)
 	{
 		Colour c = film[y * width + x] / (float)SPP;

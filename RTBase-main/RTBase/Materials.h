@@ -308,22 +308,70 @@ public:
 	Vec3 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf)
 	{
 		// Replace this with Glass sampling code
-		Vec3 wi = SamplingDistributions::cosineSampleHemisphere(sampler->next(), sampler->next());
+		/*Vec3 wi = SamplingDistributions::cosineSampleHemisphere(sampler->next(), sampler->next());
 		pdf = wi.z / M_PI;
 		reflectedColour = albedo->sample(shadingData.tu, shadingData.tv) / M_PI;
 		wi = shadingData.frame.toWorld(wi);
-		return wi;
+		return wi;*/
+
+		pdf = 1.0f;
+
+		Colour texColor = albedo->sample(shadingData.tu, shadingData.tv);
+
+		Vec3 normal = shadingData.sNormal;
+		float n1 = extIOR;
+		float n2 = intIOR;
+		float cosI = Dot(shadingData.wo, normal);
+
+		// hitting inside of glass or not
+		if (cosI < 0.0f) {
+			normal = -shadingData.sNormal; 
+			n1 = intIOR;                 
+			n2 = extIOR;
+			cosI = -cosI;                  
+		}
+
+		// snells law
+		float eta = n1 / n2;
+		float sin2I = std::max(0.0f, 1.0f - (cosI * cosI));
+		float sin2T = (eta * eta) * sin2I;
+
+		float reflectionProb = 1.0f;
+		Vec3 wi;
+
+		// total internal reflection otherwise calc normal fresnel reflection
+		if (sin2T < 1.0f) {
+			// schlick approximation
+			float r0 = (n1 - n2) / (n1 + n2);
+			r0 = r0 * r0;
+			reflectionProb = r0 + (1.0f - r0) * powf(1.0f - cosI, 5.0f);
+		}
+
+		if (sampler->next() < reflectionProb) {
+			wi = (normal * 2.0f * cosI) - shadingData.wo;
+			reflectedColour = texColor / cosI;
+		}
+		else {
+			// refraction 
+			float cosT = sqrtf(1.0f - sin2T);
+			wi = (shadingData.wo * -eta) + (normal * ((eta * cosI) - cosT));
+			reflectedColour = texColor / cosT;
+		}
+
+		return wi.normalize();
 	}
 	Colour evaluate(const ShadingData& shadingData, const Vec3& wi)
 	{
 		// Replace this with Glass evaluation code
-		return albedo->sample(shadingData.tu, shadingData.tv) / M_PI;
+		//return albedo->sample(shadingData.tu, shadingData.tv) / M_PI;
+		return Colour(0.0f, 0.0f, 0.0f);
 	}
 	float PDF(const ShadingData& shadingData, const Vec3& wi)
 	{
 		// Replace this with GlassPDF
-		Vec3 wiLocal = shadingData.frame.toLocal(wi);
-		return SamplingDistributions::cosineHemispherePDF(wiLocal);
+		/*Vec3 wiLocal = shadingData.frame.toLocal(wi);
+		return SamplingDistributions::cosineHemispherePDF(wiLocal);*/
+		return 0.0f;
 	}
 	bool isPureSpecular()
 	{

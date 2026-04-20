@@ -9,6 +9,9 @@ public:
 	Vec3 o;
 	Vec3 dir;
 	Vec3 invDir;
+
+	bool specularBounce = false;
+
 	Ray()
 	{
 	}

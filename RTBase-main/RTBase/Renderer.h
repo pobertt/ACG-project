@@ -105,7 +105,11 @@ public:
 		}
 
 		if (shadingData.bsdf->isLight()) {
-			return shadingData.bsdf->emit(shadingData, shadingData.wo) * pathThroughput;
+			if (depth == 0 || r.specularBounce == true) {
+				return shadingData.bsdf->emit(shadingData, shadingData.wo) * pathThroughput;
+			}
+			
+			return Colour(0.0f, 0.0f, 0.0f);
 		}
 
 		Colour directLight = computeDirect(shadingData, sampler);
@@ -160,7 +164,8 @@ public:
 
 		if (shadingData.bsdf->isPureSpecular()) {
 			// mirrors
-			pathThroughput = pathThroughput * (indirect * cosTheta) / pdf;
+			float absCos = fabsf(cosTheta);
+			pathThroughput = pathThroughput * (indirect * absCos) / pdf;
 		}
 		else {
 			// diffuse
@@ -169,11 +174,12 @@ public:
 			pathThroughput = pathThroughput * (f * cosTheta) / pdf;
 		}
 
-		if (cosTheta <= 0.0f) { return directLight; }
+		//if (cosTheta <= 0.0f) { return directLight; }
 
 		//pathThroughput = pathThroughput * (f * cosTheta) / pdf;
-
-		Ray nextRay(shadingData.x + (shadingData.sNormal * EPSILON), nextDir);
+		Vec3 offsetNormal = Dot(nextDir, shadingData.sNormal) > 0.0f ? shadingData.sNormal : -shadingData.sNormal;
+		Ray nextRay(shadingData.x + (offsetNormal * EPSILON), nextDir);
+		nextRay.specularBounce = shadingData.bsdf->isPureSpecular();
 		Colour indirectLight = pathTrace(nextRay, pathThroughput, depth + 1, sampler);
 
 		return directLight + indirectLight;
@@ -269,7 +275,7 @@ public:
 						film->splat(px, py, col);
 					}
 				}
-				});
+			});
 		}
 
 		for (int i = 0; i < threadsToUse; ++i) {
