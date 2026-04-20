@@ -280,7 +280,7 @@ public:
 		for (int y = 0; y < film->height; ++y) {
 			for (int x = 0; x < film->width; ++x) {
 				unsigned char r, g, b;
-				film->tonemap(x, y, r, g, b, 0.05f);
+				film->tonemap(x, y, r, g, b, 0.02f);
 				canvas->draw(x, y, r, g, b);
 			}
 		}
