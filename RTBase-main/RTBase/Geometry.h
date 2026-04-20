@@ -304,7 +304,6 @@ public:
 	}
 	void traverse(const Ray& ray, const std::vector<Triangle>& triangles, IntersectionData& intersection)
 	{
-		// marks for getting the BVH working and then more marks for it to be better (impress tom, get more marks)
 		// Add BVH Traversal code here
 		float t;
 		if (!this->bounds.rayAABB(ray, t) || t >= intersection.t) {
@@ -324,8 +323,23 @@ public:
 				}
 			}
 			else {
-				this->l->traverse(ray, triangles, intersection);
-				this->r->traverse(ray, triangles, intersection);
+				float tL = FLT_MAX, tR = FLT_MAX;
+				// Safety: ensure children exist before checking bounds
+				bool hitL = (this->l != nullptr) && this->l->bounds.rayAABB(ray, tL);
+				bool hitR = (this->r != nullptr) && this->r->bounds.rayAABB(ray, tR);
+
+				if (hitL && hitR) {
+					if (tL < tR) {
+						this->l->traverse(ray, triangles, intersection);
+						if (tR < intersection.t) this->r->traverse(ray, triangles, intersection);
+					}
+					else {
+						this->r->traverse(ray, triangles, intersection);
+						if (tL < intersection.t) this->l->traverse(ray, triangles, intersection);
+					}
+				}
+				else if (hitL) this->l->traverse(ray, triangles, intersection);
+				else if (hitR) this->r->traverse(ray, triangles, intersection);
 			}
 		}
 	}
@@ -339,7 +353,27 @@ public:
 
 	bool traverseVisible(const Ray& ray, const std::vector<Triangle>& triangles, const float maxT)
 	{
-		// Add visibility code here
-		return true;
+		float tAABB;
+
+		// check bounds
+		if (!this->bounds.rayAABB(ray, tAABB) || tAABB >= maxT) {
+			return true; 
+		}
+
+		// leaf node
+		if (this->l == NULL && this->r == NULL) {
+			for (int i = this->offset; i < this->offset + this->num; i++) {
+				float triT, u, v;
+            
+				// check hit
+				if (triangles[i].rayIntersect(ray, triT, u, v) && triT > 0.001f && triT < maxT) {
+					return false; 
+				}
+			}
+			return true;
+		}
+
+		// traverse children
+		return this->l->traverseVisible(ray, triangles, maxT) && this->r->traverseVisible(ray, triangles, maxT);
 	}
 };

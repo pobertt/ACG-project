@@ -159,41 +159,6 @@ public:
 	{
 		albedo = _albedo;
 	}
-	//Vec3 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf)
-	//{
-	//	//// Replace this with Mirror sampling code
-	//	//Vec3 wi = SamplingDistributions::cosineSampleHemisphere(sampler->next(), sampler->next());
-	//	//pdf = wi.z / M_PI;
-	//	//reflectedColour = albedo->sample(shadingData.tu, shadingData.tv) / M_PI;
-	//	//wi = shadingData.frame.toWorld(wi);
-	//	//return wi;
-
-	//	Vec3 local_wo = shadingData.frame.toLocal(shadingData.wo);
-	//	Vec3 local_wi;
-	//	local_wi.x = -local_wo.x;
-	//	local_wi.y = -local_wo.y;
-	//	local_wi.z = local_wo.z;
-
-	//	Vec3 world_wi = shadingData.frame.toWorld(local_wi);
-	//	pdf = 1.0f;
-	//	Colour mirror_albedo(1.0f, 1.0f, 1.0f);
-	//	float safe_z = std::max(0.0001f, local_wi.z);
-	//	reflectedColour = mirror_albedo / safe_z;
-
-	//	float cosTheta = local_wi.z;
-	//	if (cosTheta <= 0.0001f) {
-	//		reflectedColour = Colour(0, 0, 0);
-	//		pdf = 1.0f; // Keep PDF at 1 to avoid division by zero
-	//	}
-	//	else {
-	//		// Standard white mirror albedo, or use albedo->sample(...)
-	//		Colour mirror_albedo(1.0f, 1.0f, 1.0f);
-	//		reflectedColour = mirror_albedo / cosTheta;
-	//		pdf = 1.0f;
-	//	}
-
-	//	return world_wi;
-	//}
 	Vec3 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf)
 	{
 		// Replace this with Mirror sampling code
