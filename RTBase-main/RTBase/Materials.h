@@ -36,28 +36,75 @@ class ShadingHelper
 public:
 	static float fresnelDielectric(float cosTheta, float iorInt, float iorExt)
 	{
-		// Add code here
-		return 1.0f;
+		// swap iors depending on which side of the surface we are on
+		float iorIncident = cosTheta > 0.0f ? iorExt : iorInt;
+		float iorTransmitted = cosTheta > 0.0f ? iorInt : iorExt;
+
+		cosTheta = fabsf(cosTheta);
+
+		// snells law
+		float iorRatio = iorIncident / iorTransmitted;
+		float sin2T = (iorRatio * iorRatio) * std::max(0.0f, 1.0f - (cosTheta * cosTheta));
+
+		// total internal reflection
+		if (sin2T >= 1.0f) return 1.0f;
+
+		float cosT = sqrtf(1.0f - sin2T);
+
+		// fresnel equations
+		float parlReflectance = ((iorTransmitted * cosTheta) - (iorIncident * cosT)) / ((iorTransmitted * cosTheta) + (iorIncident * cosT));
+		float perpReflectance = ((iorIncident * cosTheta) - (iorTransmitted * cosT)) / ((iorIncident * cosTheta) + (iorTransmitted * cosT));
+
+		return ((parlReflectance * parlReflectance) + (perpReflectance * perpReflectance)) * 0.5f;
 	}
 	static Colour fresnelConductor(float cosTheta, Colour ior, Colour k)
 	{
-		// Add code here
-		return Colour(1.0f, 1.0f, 1.0f);
+		float cosI = fabsf(cosTheta);
+		float cos2 = cosI * cosI;	
+
+		Colour iorSQ = (ior * ior) + (k * k);
+		Colour iorCos = iorSQ * cos2;
+		Colour twoIorCos = ior * (2.0f * cosI);
+
+		Colour cosSQ(cos2, cos2, cos2);
+		Colour vec(1.0f, 1.0f, 1.0f);
+
+		Colour perpReflectance = (iorSQ - twoIorCos + cosSQ) / (iorSQ + twoIorCos + cosSQ);
+		Colour parlReflectance = (iorCos - twoIorCos + vec) / (iorCos + twoIorCos + vec);
+
+		return (perpReflectance + parlReflectance) * 0.5f;
 	}
 	static float lambdaGGX(Vec3 wi, float alpha)
 	{
-		// Add code here
-		return 1.0f;
+		float cosTheta = fabsf(wi.z);
+
+		if (cosTheta < 0.0001f) return 0.0f;
+
+		float cos2Theta = cosTheta * cosTheta;
+		float sin2Theta = std::max(0.0f, 1.0f - cos2Theta);
+		float tan2Theta = sin2Theta / cos2Theta;
+		float alpha2 = alpha * alpha;
+
+		return (-1.0f + sqrtf(1.0f + (alpha2 * tan2Theta))) * 0.5f;
 	}
 	static float Gggx(Vec3 wi, Vec3 wo, float alpha)
 	{
-		// Add code here
-		return 1.0f;
+		if (wi.z <= 0.0f || wo.z <= 0.0f) return 0.0f;
+
+		return 1.0f / (1.0f + lambdaGGX(wi, alpha) + lambdaGGX(wo, alpha));
 	}
 	static float Dggx(Vec3 h, float alpha)
 	{
-		// Add code here
-		return 1.0f;
+		float cosTheta = h.z;
+
+		if (cosTheta <= 0.0f) return 0.0f;
+
+		float cos2Theta = cosTheta * cosTheta;
+		float alpha2 = alpha * alpha;
+
+		float root = (cos2Theta * (alpha2 - 1.0f)) + 1.0f;
+
+		return alpha2 / (M_PI * root * root);
 	}
 };
 
@@ -301,16 +348,8 @@ public:
 		float sin2I = std::max(0.0f, 1.0f - (cosI * cosI));
 		float sin2T = (eta * eta) * sin2I;
 
-		float reflectionProb = 1.0f;
 		Vec3 wi;
-
-		// total internal reflection otherwise calc normal fresnel reflection
-		if (sin2T < 1.0f) {
-			// schlick approximation
-			float r0 = (n1 - n2) / (n1 + n2);
-			r0 = r0 * r0;
-			reflectionProb = r0 + (1.0f - r0) * powf(1.0f - cosI, 5.0f);
-		}
+		float reflectionProb = ShadingHelper::fresnelDielectric(Dot(shadingData.wo, shadingData.sNormal), intIOR, extIOR);
 
 		if (sampler->next() < reflectionProb) {
 			wi = (normal * 2.0f * cosI) - shadingData.wo;

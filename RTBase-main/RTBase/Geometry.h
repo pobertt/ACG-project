@@ -252,7 +252,6 @@ public:
 	// Note there are several options for how to implement the build method. Update this as required
 	void build(std::vector<Triangle>& inputTriangles, std::vector<Triangle>& outputTriangles)
 	{
-		// marks for getting the BVH working and then more marks for it to be better (impress tom, get more marks)
 		// Add BVH building code here
 		this->bounds.reset();
 		int axis;
