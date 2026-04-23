@@ -6,6 +6,9 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #define __STDC_LIB_EXT1__
 #include "stb_image_write.h"
+#include <OpenImageDenoise/oidn.hpp>
+#include <vector>
+#include <iostream>
 
 // Stop warnings about buffer overruns if size is zero. Size should never be zero and if it is the code handles it.
 #pragma warning( disable : 6386)
@@ -156,12 +159,33 @@ class Film
 {
 public:
 	Colour* film;
+
+	Colour* albedoBuffer;
+	Vec3* normalBuffer;
+	Colour* outputBuffer;
+
 	unsigned int width;
 	unsigned int height;
 	int SPP;
 	ImageFilter* filter;
+	
 	void splat(const float x, const float y, const Colour& L)
 	{
+		Colour L2 = L;
+
+		if (std::isnan(L.r) || std::isnan(L.g) || std::isnan(L.b) ||
+			std::isinf(L.r) || std::isinf(L.g) || std::isinf(L.b))
+		{
+			return;
+		}
+
+		float maxBrightness = 20.0f;
+		float currentLum = L2.Lum();
+
+		if (currentLum > maxBrightness) {
+			L2 = L2 * (maxBrightness / currentLum);
+		}
+
 		// Code to splat a smaple with colour L into the image plane using an ImageFilter
 		float filterWeights[25]; // Storage to cache weights
 		unsigned int indices[25]; // Store indices to minimize computations
@@ -189,7 +213,8 @@ public:
 
 	void tonemap(int x, int y, unsigned char& r, unsigned char& g, unsigned char& b, float exposure = 1.0f)
 	{
-		Colour c = film[y * width + x] / (float)SPP;
+		//Colour c = film[y * width + x] / (float)SPP;
+		Colour c = outputBuffer[y * width + x];
 
 		// exposure
 		c.r = c.r * exposure;
@@ -211,12 +236,22 @@ public:
 		width = _width;
 		height = _height;
 		film = new Colour[width * height];
+
+		albedoBuffer = new Colour[width * height];
+		normalBuffer = new Vec3[width * height];
+		outputBuffer = new Colour[width * height];
+
 		clear();
 		filter = _filter;
 	}
 	void clear()
 	{
 		memset(film, 0, width * height * sizeof(Colour));
+
+		memset(albedoBuffer, 0, width * height * sizeof(Colour));
+		memset(normalBuffer, 0, width * height * sizeof(Vec3));
+		memset(outputBuffer, 0, width * height * sizeof(Colour));
+
 		SPP = 0;
 	}
 	void incrementSPP()
@@ -232,5 +267,55 @@ public:
 		}
 		stbi_write_hdr(filename.c_str(), width, height, 3, (float*)hdrpixels);
 		delete[] hdrpixels;
+	}
+	void splatAlbedo(int x, int y, const Colour& a) {
+		if (x >= 0 && x < width && y >= 0 && y < height)
+			albedoBuffer[y * width + x] = a;
+	}
+
+	void splatNormal(int x, int y, const Vec3& n) {
+		if (x >= 0 && x < width && y >= 0 && y < height)
+			normalBuffer[y * width + x] = n;
+	}
+	void denoise() {
+		int numPixels = width * height;
+
+		std::vector<float> colorData(numPixels * 3);
+		std::vector<float> albedoData(numPixels * 3);
+		std::vector<float> normalData(numPixels * 3);
+		std::vector<float> outputData(numPixels * 3);
+
+		for (int i = 0; i < numPixels; ++i) {
+			Colour c = film[i] / (float)SPP;
+
+			colorData[i * 3 + 0] = c.r;
+			colorData[i * 3 + 1] = c.g;
+			colorData[i * 3 + 2] = c.b;
+
+			albedoData[i * 3 + 0] = albedoBuffer[i].r;
+			albedoData[i * 3 + 1] = albedoBuffer[i].g;
+			albedoData[i * 3 + 2] = albedoBuffer[i].b;
+
+			normalData[i * 3 + 0] = normalBuffer[i].x;
+			normalData[i * 3 + 1] = normalBuffer[i].y;
+			normalData[i * 3 + 2] = normalBuffer[i].z;
+		}
+
+		oidn::DeviceRef device = oidn::newDevice(oidn::DeviceType::CPU);
+		device.commit();
+		oidn::FilterRef filter = device.newFilter("RT");
+		filter.setImage("color", colorData.data(), oidn::Format::Float3, width, height);
+		filter.setImage("albedo", albedoData.data(), oidn::Format::Float3, width, height);
+		filter.setImage("normal", normalData.data(), oidn::Format::Float3, width, height);
+		filter.setImage("output", outputData.data(), oidn::Format::Float3, width, height);
+		filter.set("hdr", true);
+		filter.commit();
+		filter.execute();
+
+		for (int i = 0; i < numPixels; i++) {
+			outputBuffer[i].r = outputData[i * 3 + 0];
+			outputBuffer[i].g = outputData[i * 3 + 1];
+			outputBuffer[i].b = outputData[i * 3 + 2];
+		}
 	}
 };

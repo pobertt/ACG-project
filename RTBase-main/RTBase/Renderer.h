@@ -103,9 +103,9 @@ public:
 			}
 			return Colour(0.0f, 0.0f, 0.0f);
 		}
-
 		if (shadingData.bsdf->isLight()) {
 			if (depth == 0 || r.specularBounce == true) {
+
 				return shadingData.bsdf->emit(shadingData, shadingData.wo) * pathThroughput;
 			}
 			
@@ -225,7 +225,7 @@ public:
 	}
 	void render()
 	{
-		// Add multi-threading here for the kitchen scene
+		// Add multi-threading
 		film->incrementSPP();
 		for (int y = 0; y < film->height; y++) {
 			for (int x = 0; x < film->width; x++) {
@@ -250,32 +250,64 @@ public:
 	void renderMT()
 	{
 		int threadsToUse = numProcs;
-		int scanlinesPerThread = film->height / threadsToUse;
-
 		film->incrementSPP();
+
+		const int size = 32;
+		int tileX = (film->width + size - 1) / size;
+		int tileY = (film->height + size - 1) / size;
+		int total = tileX * tileY;
+
+		std::atomic<int> tileIndex(0);
 
 		for (int i = 0; i < threadsToUse; ++i)
 		{
-			int startY = i * scanlinesPerThread;
-			int endY = (i == threadsToUse - 1) ? film->height : startY + scanlinesPerThread;
+			threads[i] = new std::thread([this, total, tileX, size, &tileIndex, i]() {
+				int tileIdx;
 
-			threads[i] = new std::thread([this, startY, endY, i]() {
+				while ((tileIdx = tileIndex++) < total)
+				{
+					// tile coordinates
+					int gridX = tileIdx % tileX;
+					int gridY = tileIdx / tileX;
 
-				for (int y = startY; y < endY; ++y) {
-					for (int x = 0; x < film->width; ++x) {
+					int startX = gridX * size;
+					int startY = gridY * size;
+					int endX = std::min<int>(startX + size, static_cast<int>(film->width));
+					int endY = std::min<int>(startY + size, static_cast<int>(film->height));
 
-						float px = x + 0.5f;
-						float py = y + 0.5f;
-						Ray ray = scene->camera.generateRay(px, py);
+					// render pixels in tile
+					for (int y = startY; y < endY; ++y) {
+						for (int x = startX; x < endX; ++x) {
+							float px = x + 0.5f;
+							float py = y + 0.5f;
+							Ray ray = scene->camera.generateRay(px, py);
 
-						Colour startingThroughput(1.0f, 1.0f, 1.0f);
-						Colour col = pathTrace(ray, startingThroughput, 0, &samplers[i]);
-						//Colour col = direct(ray, &samplers[i]);
+							Ray gBufferRay = ray;
+							IntersectionData firstHit = scene->traverse(gBufferRay);
 
-						film->splat(px, py, col);
+							if (firstHit.t < FLT_MAX) {
+								ShadingData sd = scene->calculateShadingData(firstHit, gBufferRay);
+								film->splatAlbedo(px, py, sd.bsdf->getAlbedo(sd));
+								film->splatNormal(px, py, sd.sNormal);
+							}
+							else {
+								if (scene->background != NULL) {
+									film->splatAlbedo(px, py, scene->background->evaluate(ray.dir));
+								}
+								else {
+									film->splatAlbedo(px, py, Colour(0.0f, 0.0f, 0.0f));
+								}
+								film->splatNormal(px, py, Vec3(0.0f, 0.0f, 0.0f));
+							}
+
+							Colour startingThroughput(1.0f, 1.0f, 1.0f);
+							Colour col = pathTrace(ray, startingThroughput, 0, &samplers[i]);
+
+							film->splat(px, py, col);
+						}
 					}
 				}
-			});
+				});
 		}
 
 		for (int i = 0; i < threadsToUse; ++i) {
@@ -283,10 +315,13 @@ public:
 			delete threads[i];
 		}
 
+		film->denoise();
+
 		for (int y = 0; y < film->height; ++y) {
 			for (int x = 0; x < film->width; ++x) {
 				unsigned char r, g, b;
 				film->tonemap(x, y, r, g, b, 1.0f);
+
 				canvas->draw(x, y, r, g, b);
 			}
 		}

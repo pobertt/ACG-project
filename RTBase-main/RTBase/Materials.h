@@ -130,6 +130,9 @@ public:
 		return emission;
 	}
 	virtual float mask(const ShadingData& shadingData) = 0;
+	virtual Colour getAlbedo(const ShadingData& shadingData) {
+		return Colour(0.5f, 0.5f, 0.5f); // Default fallback
+	}
 };
 
 
@@ -195,6 +198,11 @@ public:
 	{
 		return albedo->sampleAlpha(shadingData.tu, shadingData.tv);
 	}
+	Colour getAlbedo(const ShadingData& shadingData) override
+	{
+		if (albedo) return albedo->sample(shadingData.tu, shadingData.tv);
+		return Colour(0.0f, 0.0f, 0.0f);
+	}
 };
 
 class MirrorBSDF : public BSDF
@@ -252,6 +260,11 @@ public:
 	{
 		return albedo->sampleAlpha(shadingData.tu, shadingData.tv);
 	}
+	Colour getAlbedo(const ShadingData& shadingData) override
+	{
+		if (albedo) return albedo->sample(shadingData.tu, shadingData.tv);
+		return Colour(0.0f, 0.0f, 0.0f);
+	}
 };
 
 
@@ -273,22 +286,108 @@ public:
 	Vec3 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf)
 	{
 		// Replace this with Conductor sampling code
-		Vec3 wi = SamplingDistributions::cosineSampleHemisphere(sampler->next(), sampler->next());
+		/*Vec3 wi = SamplingDistributions::cosineSampleHemisphere(sampler->next(), sampler->next());
 		pdf = wi.z / M_PI;
 		reflectedColour = albedo->sample(shadingData.tu, shadingData.tv) / M_PI;
 		wi = shadingData.frame.toWorld(wi);
-		return wi;
+		return wi;*/
+		float safeAlpha = std::max(0.001f, alpha);
+		Vec3 woLocal = shadingData.frame.toLocal(shadingData.wo);
+
+		float u1 = sampler->next();
+		float u2 = sampler->next();
+
+		float alpha2 = safeAlpha * safeAlpha;
+		float phi = 2.0f * M_PI * u1;
+
+		float denom = 1.0f + (alpha2 - 1.0f) * u2;
+		if (denom <= 0.0001f) {
+			pdf = 1.0f;
+			reflectedColour = Colour(0, 0, 0);
+			return Vec3(0, 0, 1);
+		}
+
+		float cosTheta = sqrtf(std::max(0.0f, (1.0f - u2) / denom));
+		float sinTheta = sqrtf(std::max(0.0f, 1.0f - (cosTheta * cosTheta)));
+
+		Vec3 hLocal = Vec3(sinTheta * cosf(phi), sinTheta * sinf(phi), cosTheta).normalize();
+
+		float woDotH = Dot(woLocal, hLocal);
+		if (woDotH <= 0.0001f) {
+			pdf = 1.0f;
+			reflectedColour = Colour(0, 0, 0);
+			return Vec3(0, 0, 1);
+		}
+
+		Vec3 wiLocal = (hLocal * (2.0f * woDotH)) - woLocal;
+		if (wiLocal.z <= 0.0001f) {
+			pdf = 1.0f;
+			reflectedColour = Colour(0, 0, 0);
+			return Vec3(0, 0, 1);
+		}
+
+		Vec3 wiWorld = shadingData.frame.toWorld(wiLocal).normalize();
+
+		pdf = PDF(shadingData, wiWorld);
+
+		if (pdf <= 0.0001f) {
+			pdf = 1.0f;
+			reflectedColour = Colour(0, 0, 0);
+			return wiWorld;
+		}
+
+		reflectedColour = evaluate(shadingData, wiWorld);
+
+		return wiWorld;
 	}
 	Colour evaluate(const ShadingData& shadingData, const Vec3& wi)
 	{
 		// Replace this with Conductor evaluation code
-		return albedo->sample(shadingData.tu, shadingData.tv) / M_PI;
+		//return albedo->sample(shadingData.tu, shadingData.tv) / M_PI;
+		
+		float safeAlpha = std::max(0.001f, alpha);
+
+		Vec3 woLocal = shadingData.frame.toLocal(shadingData.wo);
+		Vec3 wiLocal = shadingData.frame.toLocal(wi);
+
+		if (wiLocal.z <= 0.0001f || woLocal.z <= 0.0001f) return Colour(0.0f, 0.0f, 0.0f);
+
+		Vec3 h = woLocal + wiLocal;
+		if (h.length() < 0.0001f) return Colour(0.0f, 0.0f, 0.0f);
+		h = h.normalize();
+
+		float D = ShadingHelper::Dggx(h, safeAlpha);
+		float G = ShadingHelper::Gggx(wiLocal, woLocal, safeAlpha);
+
+		float woDotH = std::max(0.0f, Dot(woLocal, h));
+		Colour F = ShadingHelper::fresnelConductor(woDotH, eta, k);
+
+		Colour texColor = albedo->sample(shadingData.tu, shadingData.tv);
+
+		return texColor * F * ((D * G) / (4.0f * wiLocal.z * woLocal.z));
 	}
 	float PDF(const ShadingData& shadingData, const Vec3& wi)
 	{
 		// Replace this with Conductor PDF
+		/*Vec3 wiLocal = shadingData.frame.toLocal(wi);
+		return SamplingDistributions::cosineHemispherePDF(wiLocal);*/
+		float safeAlpha = std::max(0.001f, alpha);
+
+		Vec3 woLocal = shadingData.frame.toLocal(shadingData.wo);
 		Vec3 wiLocal = shadingData.frame.toLocal(wi);
-		return SamplingDistributions::cosineHemispherePDF(wiLocal);
+
+		if (wiLocal.z <= 0.0001f || woLocal.z <= 0.0001f) return 0.0f;
+
+		Vec3 h = woLocal + wiLocal;
+		if (h.length() < 0.0001f) return 0.0f;
+		h = h.normalize();
+
+		float woDotH = Dot(woLocal, h);
+		if (woDotH <= 0.0001f) return 0.0f;
+
+		float D = ShadingHelper::Dggx(h, safeAlpha);
+
+		return (D * h.z) / (4.0f * woDotH);
 	}
 	bool isPureSpecular()
 	{
@@ -301,6 +400,11 @@ public:
 	float mask(const ShadingData& shadingData)
 	{
 		return albedo->sampleAlpha(shadingData.tu, shadingData.tv);
+	}
+	Colour getAlbedo(const ShadingData& shadingData) override
+	{
+		if (albedo) return albedo->sample(shadingData.tu, shadingData.tv);
+		return Colour(0.0f, 0.0f, 0.0f);
 	}
 };
 
@@ -389,6 +493,11 @@ public:
 	{
 		return albedo->sampleAlpha(shadingData.tu, shadingData.tv);
 	}
+	Colour getAlbedo(const ShadingData& shadingData) override
+	{
+		if (albedo) return albedo->sample(shadingData.tu, shadingData.tv);
+		return Colour(0.0f, 0.0f, 0.0f);
+	}
 };
 
 class DielectricBSDF : public BSDF
@@ -438,6 +547,11 @@ public:
 	{
 		return albedo->sampleAlpha(shadingData.tu, shadingData.tv);
 	}
+	Colour getAlbedo(const ShadingData& shadingData) override
+	{
+		if (albedo) return albedo->sample(shadingData.tu, shadingData.tv);
+		return Colour(0.0f, 0.0f, 0.0f);
+	}
 };
 
 class OrenNayarBSDF : public BSDF
@@ -482,6 +596,11 @@ public:
 	float mask(const ShadingData& shadingData)
 	{
 		return albedo->sampleAlpha(shadingData.tu, shadingData.tv);
+	}
+	Colour getAlbedo(const ShadingData& shadingData) override
+	{
+		if (albedo) return albedo->sample(shadingData.tu, shadingData.tv);
+		return Colour(0.0f, 0.0f, 0.0f);
 	}
 };
 
@@ -536,6 +655,11 @@ public:
 	{
 		return albedo->sampleAlpha(shadingData.tu, shadingData.tv);
 	}
+	Colour getAlbedo(const ShadingData& shadingData) override
+	{
+		if (albedo) return albedo->sample(shadingData.tu, shadingData.tv);
+		return Colour(0.0f, 0.0f, 0.0f);
+	}
 };
 
 class LayeredBSDF : public BSDF
@@ -581,5 +705,9 @@ public:
 	float mask(const ShadingData& shadingData)
 	{
 		return base->mask(shadingData);
+	}
+	Colour getAlbedo(const ShadingData& shadingData) override
+	{
+		return base->getAlbedo(shadingData);
 	}
 };

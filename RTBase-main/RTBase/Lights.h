@@ -138,10 +138,19 @@ public:
 	Vec3 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf)
 	{
 		// Assignment: Update this code to importance sampling lighting based on luminance of each pixel
-		Vec3 wi = SamplingDistributions::uniformSampleSphere(sampler->next(), sampler->next());
+		/*Vec3 wi = SamplingDistributions::uniformSampleSphere(sampler->next(), sampler->next());
 		pdf = SamplingDistributions::uniformSpherePDF(wi);
 		reflectedColour = evaluate(wi);
-		return wi;
+		return wi;*/
+
+		Vec3 wiLocal = SamplingDistributions::cosineSampleHemisphere(sampler->next(), sampler->next());
+
+		Vec3 wiWorld = shadingData.frame.toWorld(wiLocal).normalize();
+
+		pdf = PDF(shadingData, wiWorld);
+		reflectedColour = evaluate(wiWorld);
+
+		return wiWorld;
 	}
 	Colour evaluate(const Vec3& wi)
 	{
@@ -154,7 +163,10 @@ public:
 	float PDF(const ShadingData& shadingData, const Vec3& wi)
 	{
 		// Assignment: Update this code to return the correct PDF of luminance weighted importance sampling
-		return SamplingDistributions::uniformSpherePDF(wi);
+		//return SamplingDistributions::uniformSpherePDF(wi);
+		Vec3 wiLocal = shadingData.frame.toLocal(wi);
+		if (wiLocal.z <= 0.0f) return 0.0f;
+		return wiLocal.z / M_PI;
 	}
 	bool isArea()
 	{
