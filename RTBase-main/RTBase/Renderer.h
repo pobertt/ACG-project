@@ -65,6 +65,9 @@ public:
 		float cosThetaOut = Dot(shadingData.sNormal, wi);
 		float g = 0.0f;
 
+		// Light pdf solid angle 
+		float pdfSA = pdf;
+
 		if (light->isArea()) {
 			AreaLight* areaLight = (AreaLight*)light;
 			Vec3 lightNormal = areaLight->triangle->gNormal();
@@ -73,6 +76,8 @@ public:
 			if (cosThetaOut > 0 && cosThetaLight > 0) {
 				float distSquared = std::max(0.01f, distance * distance);
 				g = (cosThetaOut * cosThetaLight) / distSquared;
+
+				pdfSA = (pdf * distSquared) / cosThetaLight;
 			}
 		}
 		else {
@@ -85,7 +90,19 @@ public:
 		}
 
 		Colour f = shadingData.bsdf->evaluate(shadingData, wi);
-		return (emittedColour * f * g) / (pdf * pmf);
+
+		float bsdfPdf = shadingData.bsdf->PDF(shadingData, wi);
+		float totalPdf = pdfSA * pmf;
+
+		float misWeight = 1.0f;
+		if (totalPdf > 0.0f) {
+			float PdfSq = totalPdf * totalPdf;
+			float bsdfPdfSq = bsdfPdf * bsdfPdf;
+			misWeight = PdfSq / (PdfSq + bsdfPdfSq);
+		}
+
+
+		return (emittedColour * f * g * misWeight) / (pdf * pmf);
 	}
 	Colour pathTrace(Ray& r, Colour& pathThroughput, int depth, Sampler* sampler)
 	{
@@ -99,7 +116,13 @@ public:
 		if (intersection.t >= FLT_MAX) {
 			if (scene->background != NULL) {
 				Colour sky = scene->background->evaluate(r.dir);
-				return sky * pathThroughput;
+				float misWeight = 1.0f;
+
+				if (depth > 0 && !r.specularBounce) {
+					misWeight = ShadingHelper::powerHeuristic(r.prevPdf, scene->background->PDF(shadingData, r.dir));
+				}
+
+				return sky * misWeight * pathThroughput;
 			}
 			return Colour(0.0f, 0.0f, 0.0f);
 		}
@@ -180,6 +203,7 @@ public:
 		Vec3 offsetNormal = Dot(nextDir, shadingData.sNormal) > 0.0f ? shadingData.sNormal : -shadingData.sNormal;
 		Ray nextRay(shadingData.x + (offsetNormal * EPSILON), nextDir);
 		nextRay.specularBounce = shadingData.bsdf->isPureSpecular();
+		nextRay.prevPdf = pdf;
 		Colour indirectLight = pathTrace(nextRay, pathThroughput, depth + 1, sampler);
 
 		return directLight + indirectLight;
@@ -321,10 +345,13 @@ public:
 			for (int x = 0; x < film->width; ++x) {
 				unsigned char r, g, b;
 				film->tonemap(x, y, r, g, b, 1.0f);
-
+				
 				canvas->draw(x, y, r, g, b);
+				
 			}
 		}
+
+		
 	}
 
 	int getSPP()

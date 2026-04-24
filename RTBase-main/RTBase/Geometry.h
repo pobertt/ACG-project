@@ -11,6 +11,7 @@ public:
 	Vec3 invDir;
 
 	bool specularBounce = false;
+	float prevPdf = 1.0f;
 
 	Ray()
 	{

@@ -171,21 +171,6 @@ public:
 	
 	void splat(const float x, const float y, const Colour& L)
 	{
-		Colour L2 = L;
-
-		if (std::isnan(L.r) || std::isnan(L.g) || std::isnan(L.b) ||
-			std::isinf(L.r) || std::isinf(L.g) || std::isinf(L.b))
-		{
-			return;
-		}
-
-		float maxBrightness = 20.0f;
-		float currentLum = L2.Lum();
-
-		if (currentLum > maxBrightness) {
-			L2 = L2 * (maxBrightness / currentLum);
-		}
-
 		// Code to splat a smaple with colour L into the image plane using an ImageFilter
 		float filterWeights[25]; // Storage to cache weights
 		unsigned int indices[25]; // Store indices to minimize computations

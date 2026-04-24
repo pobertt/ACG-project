@@ -106,6 +106,13 @@ public:
 
 		return alpha2 / (M_PI * root * root);
 	}
+	static float powerHeuristic(float pdfA, float pdfB) {
+		// calc weights
+		float a = pdfA * pdfA;
+		float b = pdfB * pdfB;
+		if (a + b == 0.0f) return 0.0f;
+		return a / (a + b);
+	}
 };
 
 class BSDF
