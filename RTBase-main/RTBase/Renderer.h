@@ -11,6 +11,12 @@
 #include <thread>
 #include <functional>
 
+struct VPL {
+	Vec3 position;
+	Vec3 normal;
+	Colour intensity;
+};
+
 class RayTracer
 {
 public:
@@ -20,6 +26,9 @@ public:
 	MTRandom *samplers;
 	std::thread **threads;
 	int numProcs;
+
+	std::vector<VPL> vpls;
+
 	void init(Scene* _scene, GamesEngineeringBase::Window* _canvas)
 	{
 		scene = _scene;
@@ -36,6 +45,146 @@ public:
 	void clear()
 	{
 		film->clear();
+	}
+	void genVPLs(int paths, int maxDepth) {
+		vpls.clear();
+
+		std::cout << "generating: " << paths << " VPLs" << std::endl;
+
+		// shoot ray from light source
+		for (int i = 0; i < paths; i++) {
+			float pmf;
+			// randomly choose 1 light to shoot a ray from
+			Light* light = scene->sampleLight(&samplers[0], pmf);
+			if (light == NULL || pmf <= 0.0f) {
+				continue;
+			}
+
+			// random starting pos and direction
+			float posPdf;
+			float dirPdf;
+			Vec3 pos = light->samplePositionFromLight(&samplers[0], posPdf);
+			Vec3 dir = light->sampleDirectionFromLight(&samplers[0], dirPdf);
+
+			// colour being emitted
+			Colour intensity(0.0f, 0.0f, 0.0f);
+			if (light->isArea()) {
+				intensity = ((AreaLight*)light)->emission;
+			}
+			else {
+				intensity = light->evaluate(dir);
+			}
+
+			// monte carlo weightuing 
+			intensity = intensity / (pmf * paths * posPdf * dirPdf);
+
+			// if area light emission is affected by lambert cosine law
+			if (light->isArea()) {
+				//float cosTheta = Dot(((AreaLight*)light)->triangle->gNormal(), dir);
+				intensity = intensity * std::max(0.0f, Dot(((AreaLight*)light)->triangle->gNormal(), dir));
+			}
+
+			// create ray
+			Ray r(pos + (dir * EPSILON), dir);
+
+			// ray bouncing 
+			for (int depth = 0; depth < maxDepth; depth++) {
+				// fire ray
+				IntersectionData intersection = scene->traverse(r);
+
+				// ray missed
+				if (intersection.t >= FLT_MAX) {
+					break;
+				}
+
+				// hit = get data 
+				ShadingData sd = scene->calculateShadingData(intersection, r);
+
+				// vpl
+				if (!sd.bsdf->isPureSpecular()) {
+					VPL vpl;
+					vpl.position = sd.x;
+					vpl.normal = sd.sNormal;
+					vpl.intensity = intensity;  // The current energy of the ray
+					vpls.push_back(vpl);
+				}
+
+				Colour indirect;
+				float pdf;
+
+				// where ray goes next
+				Vec3 nextDir = sd.bsdf->sample(sd, &samplers[0], indirect, pdf);
+				float cosTheta = Dot(sd.sNormal, nextDir);
+				// kill if failed
+				if (pdf <= 0.0f) {
+					break;
+				}
+				else if (cosTheta <= 0.0f && !sd.bsdf->isPureSpecular()) {
+					break;
+				}
+
+				// update ray for next bounce
+				if (sd.bsdf->isPureSpecular()) {
+					// glass/mirrors
+					intensity = intensity * indirect;
+				}
+				else {
+					Colour f = sd.bsdf->evaluate(sd, nextDir);
+					intensity = intensity * (f * fabsf(cosTheta)) / pdf;
+				}
+
+				// russian roulette
+				float prob = std::min(1.0f, std::max(intensity.r, std::max(intensity.g, intensity.b)));
+				if (prob < 0.05f) break;
+				if (samplers[0].next() > prob) break;
+				intensity = intensity / prob;
+
+				// ray for next loop
+				r = Ray(sd.x + ((Dot(nextDir, sd.sNormal) > 0.0f ? sd.sNormal : -sd.sNormal) * EPSILON), nextDir);
+			}
+		}
+	}
+	Colour computeDirectVPL(ShadingData shadingData)
+	{
+		// glass/mirrors
+		if (shadingData.bsdf->isPureSpecular() == true) {
+			return Colour(0.0f, 0.0f, 0.0f);
+		}
+
+		Colour light(0.0f, 0.0f, 0.0f);
+
+		// loop vpl
+		for (int i = 0; i < vpls.size(); i++)
+		{
+			VPL vpl = vpls[i];
+
+			// distance/direction
+			Vec3 wi = vpl.position - shadingData.x;
+			float dist = wi.length();
+			wi = wi.normalize();
+
+			// shadow ray
+			if (!scene->visible(shadingData.x, vpl.position)) {
+				continue;
+			}
+
+			// lamberts cosine law
+			float cosTheta = Dot(shadingData.sNormal, wi);
+			float cosThetaL = Dot(vpl.normal, -wi);
+
+			// accumulate clamped VPL light.
+			if (cosTheta > 0.0f && cosThetaL > 0.0f) {
+				float distSq = std::max(0.01f, dist * dist);
+				float g = (cosTheta * cosThetaL) / distSq;
+
+				// eval how mat reacts to light
+				Colour f = shadingData.bsdf->evaluate(shadingData, wi);
+
+				light = light + (vpl.intensity * f * g);
+			}
+		}
+
+		return light;
 	}
 	Colour computeDirect(ShadingData shadingData, Sampler* sampler)
 	{
@@ -104,6 +253,73 @@ public:
 
 		return (emittedColour * f * g * misWeight) / (pdf * pmf);
 	}
+	Colour computeIndirect(ShadingData shadingData, Colour& pathThroughput, int depth, Sampler* sampler)
+	{
+		// russian roulette
+		float survivalProb = std::max(pathThroughput.r, std::max(pathThroughput.g, pathThroughput.b));
+		if (sampler->next() > survivalProb) {
+			return Colour(0.0f, 0.0f, 0.0f);
+		}
+		pathThroughput = pathThroughput / survivalProb;
+
+		Colour indirect;
+		float pdf;
+		Vec3 nextDir = shadingData.bsdf->sample(shadingData, sampler, indirect, pdf);
+
+		float cosTheta = Dot(shadingData.sNormal, nextDir);
+
+		if (shadingData.bsdf->isPureSpecular()) {
+			// glass/mirrors
+			float absCos = fabsf(cosTheta);
+			pathThroughput = pathThroughput * (indirect * absCos) / pdf;
+		}
+		else {
+			// diffuse/conductors
+			if (cosTheta <= 0.0f) return Colour(0.0f, 0.0f, 0.0f);
+			Colour f = shadingData.bsdf->evaluate(shadingData, nextDir);
+			pathThroughput = pathThroughput * (f * cosTheta) / pdf;
+		}
+
+		// fires
+		Vec3 offsetNormal = Dot(nextDir, shadingData.sNormal) > 0.0f ? shadingData.sNormal : -shadingData.sNormal;
+		Ray nextRay(shadingData.x + (offsetNormal * EPSILON), nextDir);
+		nextRay.specularBounce = shadingData.bsdf->isPureSpecular();
+		nextRay.prevPdf = pdf;
+
+		return pathTrace(nextRay, pathThroughput, depth + 1, sampler);
+	}
+	Colour computeIndirectVPL(ShadingData shadingData, Colour pathThroughput, int depth, Sampler* sampler)
+	{
+		if (shadingData.bsdf->isPureSpecular()) {
+			// glass/water
+			Colour indirect;
+			float pdf;
+			Vec3 nextDir = shadingData.bsdf->sample(shadingData, sampler, indirect, pdf);
+
+			if (pdf <= 0.0f) return Colour(0.0f, 0.0f, 0.0f);
+
+			float cosTheta = Dot(shadingData.sNormal, nextDir);
+			float absCos = fabsf(cosTheta);
+
+			pathThroughput = pathThroughput * (indirect * absCos) / pdf;
+
+			Vec3 offsetNormal = Dot(nextDir, shadingData.sNormal) > 0.0f ? shadingData.sNormal : -shadingData.sNormal;
+			Ray nextRay(shadingData.x + (offsetNormal * EPSILON), nextDir);
+			nextRay.specularBounce = true;
+			nextRay.prevPdf = pdf;
+
+			return pathTrace(nextRay, pathThroughput, depth + 1, sampler);
+		}
+		else {
+			// solid
+			Colour vplLight(0.0f, 0.0f, 0.0f);
+			if (vpls.size() > 0) {
+				vplLight = computeDirectVPL(shadingData) / (float)vpls.size();
+			}
+
+			return (vplLight * pathThroughput);
+		}
+	}
 	Colour pathTrace(Ray& r, Colour& pathThroughput, int depth, Sampler* sampler)
 	{
 		IntersectionData intersection = scene->traverse(r);
@@ -138,75 +354,10 @@ public:
 		Colour directLight = computeDirect(shadingData, sampler);
 		directLight = directLight * pathThroughput;
 
-		float survivalProb = std::max(pathThroughput.r, std::max(pathThroughput.g, pathThroughput.b));
-		float px = sampler->next();
-		if (px > survivalProb) { return directLight; }
+		//Colour l = computeIndirect(shadingData, pathThroughput, depth, sampler);
+		Colour l = computeIndirectVPL(shadingData, pathThroughput, depth, sampler);
 
-		pathThroughput = pathThroughput / survivalProb;
-
-		/*
-		without uniform sampling
-		Colour nextColour;
-		float pdf;
-		Vec3 nextDir = shadingData.bsdf->sample(shadingData, sampler, nextColour, pdf);
-
-		nextDir = shadingData.frame.toWorld(nextDir);
-		if (pdf <= 0.0f) { return directLight; }
-		Colour f = shadingData.bsdf->evaluate(shadingData, nextDir);
-		
-		float cosTheta = Dot(shadingData.sNormal, nextDir);
-		if (cosTheta <= 0.0f) { return directLight; }
-
-		pathThroughput = pathThroughput * (f * cosTheta) / pdf;
-
-		Ray nextRay(shadingData.x + (shadingData.sNormal * EPSILON), nextDir);
-		Colour indirectLight = pathTrace(nextRay, pathThroughput, depth + 1, sampler);
-
-		return directLight + indirectLight;*/
-
-		float r1 = sampler->next();
-		float r2 = sampler->next();
-
-		//Vec3 localDir = SamplingDistributions::uniformSampleHemisphere(r1, r2);
-		//Vec3 nextDir = shadingData.frame.toWorld(localDir);
-		//float pdf = SamplingDistributions::uniformHemispherePDF(localDir);
-
-		// Variance Reduction
-		/*Vec3 localDir = SamplingDistributions::cosineSampleHemisphere(r1, r2);
-		Vec3 nextDir = shadingData.frame.toWorld(localDir);
-		float pdf = SamplingDistributions::cosineHemispherePDF(localDir);*/
-
-		// For materials:
-		Colour indirect;
-		float pdf;
-		Vec3 nextDir = shadingData.bsdf->sample(shadingData, sampler, indirect, pdf);
-		Colour f;
-
-
-		float cosTheta = Dot(shadingData.sNormal, nextDir);
-
-		if (shadingData.bsdf->isPureSpecular()) {
-			// mirrors
-			float absCos = fabsf(cosTheta);
-			pathThroughput = pathThroughput * (indirect * absCos) / pdf;
-		}
-		else {
-			// diffuse
-			if (cosTheta <= 0.0f) return directLight;
-			f = shadingData.bsdf->evaluate(shadingData, nextDir);
-			pathThroughput = pathThroughput * (f * cosTheta) / pdf;
-		}
-
-		//if (cosTheta <= 0.0f) { return directLight; }
-
-		//pathThroughput = pathThroughput * (f * cosTheta) / pdf;
-		Vec3 offsetNormal = Dot(nextDir, shadingData.sNormal) > 0.0f ? shadingData.sNormal : -shadingData.sNormal;
-		Ray nextRay(shadingData.x + (offsetNormal * EPSILON), nextDir);
-		nextRay.specularBounce = shadingData.bsdf->isPureSpecular();
-		nextRay.prevPdf = pdf;
-		Colour indirectLight = pathTrace(nextRay, pathThroughput, depth + 1, sampler);
-
-		return directLight + indirectLight;
+		return directLight + l;
 
 	}
 	Colour direct(Ray& r, Sampler* sampler)
@@ -256,8 +407,8 @@ public:
 				float px = x + 0.5f;
 				float py = y + 0.5f;
 				Ray ray = scene->camera.generateRay(px, py);
+
 				//Colour col = viewNormals(ray);
-				
 				//Colour col = albedo(ray);
 				//Colour col = direct(ray, &samplers[0]);
 
@@ -273,6 +424,11 @@ public:
 	}
 	void renderMT()
 	{
+
+		if (film->SPP == 0) {
+			genVPLs(100, 5);
+		}
+
 		int threadsToUse = numProcs;
 		film->incrementSPP();
 
