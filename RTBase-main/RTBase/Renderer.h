@@ -144,46 +144,44 @@ public:
 			}
 		}
 	}
-	Colour computeDirectVPL(ShadingData shadingData)
+	Colour computeDirectVPL(ShadingData shadingData, Sampler* sampler)
 	{
 		// glass/mirrors
 		if (shadingData.bsdf->isPureSpecular() == true) {
 			return Colour(0.0f, 0.0f, 0.0f);
 		}
+		if (vpls.empty()) return Colour(0.0f, 0.0f, 0.0f);
 
 		Colour light(0.0f, 0.0f, 0.0f);
 
-		// loop vpl
-		for (int i = 0; i < vpls.size(); i++)
-		{
-			VPL vpl = vpls[i];
+		int randomVplIndex = std::min((int)(sampler->next() * vpls.size()), (int)vpls.size() - 1);
+		VPL vpl = vpls[randomVplIndex];
 
-			// distance/direction
-			Vec3 wi = vpl.position - shadingData.x;
-			float dist = wi.length();
-			wi = wi.normalize();
+		// distance/direction
+		Vec3 wi = vpl.position - shadingData.x;
+		float dist = wi.length();
+		wi = wi.normalize();
 
-			// shadow ray
-			if (!scene->visible(shadingData.x, vpl.position)) {
-				continue;
-			}
-
-			// lamberts cosine law
-			float cosTheta = Dot(shadingData.sNormal, wi);
-			float cosThetaL = Dot(vpl.normal, -wi);
-
-			// accumulate clamped VPL light.
-			if (cosTheta > 0.0f && cosThetaL > 0.0f) {
-				float distSq = std::max(0.01f, dist * dist);
-				float g = (cosTheta * cosThetaL) / distSq;
-
-				// eval how mat reacts to light
-				Colour f = shadingData.bsdf->evaluate(shadingData, wi);
-
-				light = light + (vpl.intensity * f * g);
-			}
+		// shadow ray
+		if (!scene->visible(shadingData.x, vpl.position)) {
+			return Colour(0.0f, 0.0f, 0.0f);
 		}
 
+		// lamberts cosine law
+		float cosTheta = Dot(shadingData.sNormal, wi);
+		float cosThetaL = Dot(vpl.normal, -wi);
+
+		// accumulate clamped VPL light.
+		if (cosTheta > 0.0f && cosThetaL > 0.0f) {
+			float distSq = std::max(0.01f, dist * dist);
+			float g = (cosTheta * cosThetaL) / distSq;
+
+			// eval how mat reacts to light
+			Colour f = shadingData.bsdf->evaluate(shadingData, wi);
+
+			light = light + (vpl.intensity * f * g) * (float)vpls.size();
+		}
+			
 		return light;
 	}
 	Colour computeDirect(ShadingData shadingData, Sampler* sampler)
@@ -314,7 +312,7 @@ public:
 			// solid
 			Colour vplLight(0.0f, 0.0f, 0.0f);
 			if (vpls.size() > 0) {
-				vplLight = computeDirectVPL(shadingData) / (float)vpls.size();
+				vplLight = computeDirectVPL(shadingData, sampler);
 			}
 
 			return (vplLight * pathThroughput);
@@ -426,7 +424,7 @@ public:
 	{
 
 		if (film->SPP == 0) {
-			genVPLs(100, 5);
+			genVPLs(10000, 5);
 		}
 
 		int threadsToUse = numProcs;
