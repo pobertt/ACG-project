@@ -46,6 +46,117 @@ public:
 	{
 		film->clear();
 	}
+	void connectToCamera(ShadingData& sd, Colour col, float totalPaths)
+	{
+		float x, y;
+
+		// safety checks
+		if (!scene->camera.projectOntoCamera(sd.x, x, y)) return;
+		if (x < 0 || x >= film->width || y < 0 || y >= film->height) return;
+		if (!scene->visible(sd.x, scene->camera.origin)) return;
+
+		// dist/direction
+		Vec3 v = scene->camera.origin - sd.x;
+		float distSq = v.lengthSq();
+		Vec3 dir = v / sqrtf(distSq);
+
+		Colour f = sd.bsdf->evaluate(sd, dir);
+
+		float cosThetaS = Dot(sd.sNormal, dir);
+		float cosThetaC = Dot(scene->camera.viewDirection, -dir);
+
+		if (cosThetaS > 0.0f && cosThetaC > 0.0f) {
+			float g = (cosThetaS * cosThetaC) / std::max(0.01f, distSq);
+			film->splat(x, y, (col * f * g) / totalPaths);
+		}
+	}
+	
+	void lightTracePath(Ray& r, Colour pathThroughput, Colour Le, Sampler* sampler, int depth, float totalPaths)
+	{
+		if (depth > 32) return;
+
+		// fire 
+		IntersectionData intersection = scene->traverse(r);
+		if (intersection.t >= FLT_MAX) return;
+
+		ShadingData sd = scene->calculateShadingData(intersection, r);
+
+		// connect to cam (only for diffuse/glossy)
+		if (!sd.bsdf->isPureSpecular()) {
+			connectToCamera(sd, pathThroughput * Le, totalPaths);
+		}
+
+		// find next direction
+		Colour indirect;
+		float pdf;
+		Vec3 nextDir = sd.bsdf->sample(sd, sampler, indirect, pdf);
+
+		if (pdf <= 0.0f) return;
+
+		float cosTheta = Dot(sd.sNormal, nextDir);
+		if (cosTheta <= 0.0f && !sd.bsdf->isPureSpecular()) return;
+
+		if (sd.bsdf->isPureSpecular()) {
+			// glass/mirror
+			pathThroughput = pathThroughput * indirect;
+		}
+		else {
+			// diffuse
+			Colour f = sd.bsdf->evaluate(sd, nextDir);
+			pathThroughput = pathThroughput * (f * fabsf(cosTheta)) / pdf;
+		}
+
+		// russian roulette 
+		float prob = std::min(1.0f, std::max(pathThroughput.r, std::max(pathThroughput.g, pathThroughput.b)));
+		if (prob < 0.05f || sampler->next() > prob) return;
+
+		pathThroughput = pathThroughput / prob;
+
+		// fire next ray
+		Vec3 offsetNormal = Dot(nextDir, sd.sNormal) > 0.0f ? sd.sNormal : -sd.sNormal;
+		Ray nextRay(sd.x + (offsetNormal * EPSILON), nextDir);
+
+		// recursion 
+		lightTracePath(nextRay, pathThroughput, Le, sampler, depth + 1, totalPaths);
+	}
+
+	void lightTrace(Sampler* sampler, float totalPaths)
+	{
+		// pick a random light
+		float pmf;
+		Light* light = scene->sampleLight(sampler, pmf);
+
+		if (light == NULL || pmf <= 0.0f) return;
+
+		// random starting pos and direction
+		float posPdf;
+		float dirPdf;
+		Vec3 pos = light->samplePositionFromLight(sampler, posPdf);
+		Vec3 dir = light->sampleDirectionFromLight(sampler, dirPdf);
+
+		if (posPdf <= 0.0f || dirPdf <= 0.0f) return;
+
+		Colour Le(0.0f, 0.0f, 0.0f);
+		if (light->isArea()) {
+			Le = ((AreaLight*)light)->emission;
+		}
+		else {
+			Le = light->evaluate(dir);
+		}
+
+		// monte carlo weighting
+		Colour pathThroughput = Colour(1.0f, 1.0f, 1.0f) / (pmf * posPdf * dirPdf);
+
+		// lambert cosine law
+		if (light->isArea()) {
+			pathThroughput = pathThroughput * std::max(0.0f, Dot(((AreaLight*)light)->triangle->gNormal(), dir));
+		}
+
+		// create ray obj
+		Ray r(pos + (dir * EPSILON), dir);
+
+		lightTracePath(r, pathThroughput, Le, sampler, 0, totalPaths);
+	}
 	void genVPLs(int paths, int maxDepth) {
 		vpls.clear();
 
@@ -56,9 +167,7 @@ public:
 			float pmf;
 			// randomly choose 1 light to shoot a ray from
 			Light* light = scene->sampleLight(&samplers[0], pmf);
-			if (light == NULL || pmf <= 0.0f) {
-				continue;
-			}
+			if (light == NULL || pmf <= 0.0f) continue;
 
 			// random starting pos and direction
 			float posPdf;
@@ -80,7 +189,6 @@ public:
 
 			// if area light emission is affected by lambert cosine law
 			if (light->isArea()) {
-				//float cosTheta = Dot(((AreaLight*)light)->triangle->gNormal(), dir);
 				intensity = intensity * std::max(0.0f, Dot(((AreaLight*)light)->triangle->gNormal(), dir));
 			}
 
@@ -173,7 +281,7 @@ public:
 
 		// accumulate clamped VPL light.
 		if (cosTheta > 0.0f && cosThetaL > 0.0f) {
-			float distSq = std::max(0.01f, dist * dist);
+			float distSq = std::max(0.1f, dist * dist);
 			float g = (cosTheta * cosThetaL) / distSq;
 
 			// eval how mat reacts to light
@@ -204,7 +312,7 @@ public:
 		if (pdf <= 0.0f) { return Colour(0.0f, 0.0f, 0.0f); }
 
 		Vec3 wi = sampleVec - shadingData.x;
-		float distance = wi.length();
+		float dist = wi.length();
 		wi = wi.normalize();
 
 		if (!scene->visible(shadingData.x, sampleVec)) { return Colour(0.0f, 0.0f, 0.0f); };
@@ -221,7 +329,7 @@ public:
 			float cosThetaLight = Dot(lightNormal, -wi);
 			
 			if (cosThetaOut > 0 && cosThetaLight > 0) {
-				float distSquared = std::max(0.01f, distance * distance);
+				float distSquared = std::max(0.1f, dist * dist);
 				g = (cosThetaOut * cosThetaLight) / distSquared;
 
 				pdfSA = (pdf * distSquared) / cosThetaLight;
@@ -254,11 +362,11 @@ public:
 	Colour computeIndirect(ShadingData shadingData, Colour& pathThroughput, int depth, Sampler* sampler)
 	{
 		// russian roulette
-		float survivalProb = std::max(pathThroughput.r, std::max(pathThroughput.g, pathThroughput.b));
-		if (sampler->next() > survivalProb) {
+		float prob = std::max(pathThroughput.r, std::max(pathThroughput.g, pathThroughput.b));
+		if (sampler->next() > prob) {
 			return Colour(0.0f, 0.0f, 0.0f);
 		}
-		pathThroughput = pathThroughput / survivalProb;
+		pathThroughput = pathThroughput / prob;
 
 		Colour indirect;
 		float pdf;
@@ -353,7 +461,9 @@ public:
 		directLight = directLight * pathThroughput;
 
 		//Colour l = computeIndirect(shadingData, pathThroughput, depth, sampler);
-		Colour l = computeIndirectVPL(shadingData, pathThroughput, depth, sampler);
+		//Colour l = computeIndirectVPL(shadingData, pathThroughput, depth, sampler);
+
+		Colour l = computeIndirect(shadingData, pathThroughput, depth, sampler);
 
 		return directLight + l;
 
@@ -424,8 +534,9 @@ public:
 	{
 
 		if (film->SPP == 0) {
-			genVPLs(10000, 5);
+			genVPLs(1000, 5);
 		}
+
 
 		int threadsToUse = numProcs;
 		film->incrementSPP();
@@ -435,11 +546,14 @@ public:
 		int tileY = (film->height + size - 1) / size;
 		int total = tileX * tileY;
 
+		int pathsPerTile = 5000;
+		float totalLightPaths = (float)(tileX * tileY * pathsPerTile);
+
 		std::atomic<int> tileIndex(0);
 
 		for (int i = 0; i < threadsToUse; ++i)
 		{
-			threads[i] = new std::thread([this, total, tileX, size, &tileIndex, i]() {
+			threads[i] = new std::thread([this, total, tileX, size, &tileIndex, i, totalLightPaths, pathsPerTile]() {
 				int tileIdx;
 
 				while ((tileIdx = tileIndex++) < total)
@@ -463,6 +577,7 @@ public:
 							Ray gBufferRay = ray;
 							IntersectionData firstHit = scene->traverse(gBufferRay);
 
+
 							if (firstHit.t < FLT_MAX) {
 								ShadingData sd = scene->calculateShadingData(firstHit, gBufferRay);
 								film->splatAlbedo(px, py, sd.bsdf->getAlbedo(sd));
@@ -482,10 +597,16 @@ public:
 							Colour col = pathTrace(ray, startingThroughput, 0, &samplers[i]);
 
 							film->splat(px, py, col);
+
+
+
 						}
 					}
+					/*for (int p = 0; p < pathsPerTile; p++) {
+						lightTrace(&samplers[i], totalLightPaths);
+					}*/
 				}
-				});
+			});
 		}
 
 		for (int i = 0; i < threadsToUse; ++i) {

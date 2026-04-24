@@ -57,6 +57,9 @@ public:
 	bool projectOntoCamera(const Vec3& p, float& x, float& y)
 	{
 		Vec3 pview = cameraToView.mulPoint(p);
+		if (pview.z > 0.0f) {
+			return false;
+		}
 		Vec3 pproj = projectionMatrix.mulPointAndPerspectiveDivide(pview);
 		x = (pproj.x + 1.0f) * 0.5f;
 		y = (pproj.y + 1.0f) * 0.5f;
