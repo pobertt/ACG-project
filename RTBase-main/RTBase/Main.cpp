@@ -56,7 +56,7 @@ int main(int argc, char *argv[])
 	
 	// Initialize default parameters "kitchen" or "cornell-box"
 	std::string sceneName = "bathroom";
-	std::string filename = "GI.hdr";
+	std::string filename = "C:/Users/u5730946/Documents/GitHub/ACG-project/GI.hdr";
 	unsigned int SPP = 8192;
 
 	if (argc > 1)
@@ -150,16 +150,44 @@ int main(int argc, char *argv[])
 		std::cout << t << std::endl;
 		if (canvas.keyPressed('P'))
 		{
+			std::cout << "Denoising" << std::endl;
+			rt.film->denoise();
+
+			// Overwrite the noisy live buffer with the smooth output
+			for (int i = 0; i < rt.film->width * rt.film->height; i++) {
+				rt.film->film[i] = rt.film->outputBuffer[i] * (float)rt.film->SPP;
+			}
+
+			for (int y = 0; y < rt.film->height; y++) {
+				for (int x = 0; x < rt.film->width; x++) {
+					unsigned char r, g, b;
+					rt.film->tonemap(x, y, r, g, b, 1.0f);
+					canvas.draw(x, y, r, g, b);
+				}
+			}
+
 			rt.saveHDR(filename);
+
+			size_t pos = filename.find_last_of('.');
+			std::string pngFilename = filename.substr(0, pos) + "_smooth.png";
+			rt.savePNG(pngFilename);
+
+			std::cout << "Saved smooth HDR to " << filename << std::endl;
+			std::cout << "Saved smooth PNG to " << pngFilename << std::endl;
+
+			canvas.present();
+			break;
 		}
 		if (canvas.keyPressed('L'))
 		{
 			size_t pos = filename.find_last_of('.');
 			std::string ldrFilename = filename.substr(0, pos) + ".png";
 			rt.savePNG(ldrFilename);
+			std::cout << "Saved PNG image to " << ldrFilename << std::endl;
 		}
 		if (SPP == rt.getSPP())
 		{
+			rt.film->denoise();
 			rt.saveHDR(filename);
 			break;
 		}

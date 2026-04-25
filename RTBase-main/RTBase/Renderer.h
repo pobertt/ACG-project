@@ -213,7 +213,13 @@ public:
 					VPL vpl;
 					vpl.position = sd.x;
 					vpl.normal = sd.sNormal;
-					vpl.intensity = intensity;  // The current energy of the ray
+					vpl.intensity = intensity;
+
+					if (std::isnan(intensity.r) || std::isnan(intensity.g) || std::isnan(intensity.b) ||
+						std::isinf(intensity.r) || std::isinf(intensity.g) || std::isinf(intensity.b)) {
+						break;
+					}
+
 					vpls.push_back(vpl);
 				}
 
@@ -460,10 +466,9 @@ public:
 		Colour directLight = computeDirect(shadingData, sampler);
 		directLight = directLight * pathThroughput;
 
-		//Colour l = computeIndirect(shadingData, pathThroughput, depth, sampler);
-		//Colour l = computeIndirectVPL(shadingData, pathThroughput, depth, sampler);
-
 		Colour l = computeIndirect(shadingData, pathThroughput, depth, sampler);
+		//Colour l = computeIndirectVPL(shadingData, pathThroughput, depth, sampler);
+		//Colour l = computeIndirect(shadingData, pathThroughput, depth, sampler);
 
 		return directLight + l;
 
@@ -546,7 +551,7 @@ public:
 		int tileY = (film->height + size - 1) / size;
 		int total = tileX * tileY;
 
-		int pathsPerTile = 5000;
+		int pathsPerTile = 1;
 		float totalLightPaths = (float)(tileX * tileY * pathsPerTile);
 
 		std::atomic<int> tileIndex(0);
@@ -598,8 +603,6 @@ public:
 
 							film->splat(px, py, col);
 
-
-
 						}
 					}
 					/*for (int p = 0; p < pathsPerTile; p++) {
@@ -614,7 +617,7 @@ public:
 			delete threads[i];
 		}
 
-		film->denoise();
+		//film->denoise();
 
 		for (int y = 0; y < film->height; ++y) {
 			for (int x = 0; x < film->width; ++x) {

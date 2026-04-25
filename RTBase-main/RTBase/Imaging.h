@@ -171,6 +171,11 @@ public:
 	
 	void splat(const float x, const float y, const Colour& L)
 	{
+		if (std::isnan(L.r) || std::isnan(L.g) || std::isnan(L.b) ||
+			std::isinf(L.r) || std::isinf(L.g) || std::isinf(L.b) ||
+			L.r < 0.0f || L.g < 0.0f || L.b < 0.0f) {
+			return;
+		}
 		// Code to splat a smaple with colour L into the image plane using an ImageFilter
 		float filterWeights[25]; // Storage to cache weights
 		unsigned int indices[25]; // Store indices to minimize computations
@@ -198,8 +203,8 @@ public:
 
 	void tonemap(int x, int y, unsigned char& r, unsigned char& g, unsigned char& b, float exposure = 1.0f)
 	{
-		//Colour c = film[y * width + x] / (float)SPP;
-		Colour c = outputBuffer[y * width + x];
+		Colour c = film[y * width + x] / (float)SPP;
+		//Colour c = outputBuffer[y * width + x];
 
 		// exposure
 		c.r = c.r * exposure;
@@ -248,7 +253,7 @@ public:
 		Colour* hdrpixels = new Colour[width * height];
 		for (unsigned int i = 0; i < (width * height); i++)
 		{
-			hdrpixels[i] = film[i] / (float)SPP;
+			hdrpixels[i] = outputBuffer[i];
 		}
 		stbi_write_hdr(filename.c_str(), width, height, 3, (float*)hdrpixels);
 		delete[] hdrpixels;
@@ -273,21 +278,40 @@ public:
 		for (int i = 0; i < numPixels; ++i) {
 			Colour c = film[i] / (float)SPP;
 
+			// 1. Sanitize Color Data
+			if (std::isnan(c.r) || std::isnan(c.g) || std::isnan(c.b) ||
+				std::isinf(c.r) || std::isinf(c.g) || std::isinf(c.b)) {
+				c = Colour(0.0f, 0.0f, 0.0f);
+			}
 			colorData[i * 3 + 0] = c.r;
 			colorData[i * 3 + 1] = c.g;
 			colorData[i * 3 + 2] = c.b;
 
-			albedoData[i * 3 + 0] = albedoBuffer[i].r;
-			albedoData[i * 3 + 1] = albedoBuffer[i].g;
-			albedoData[i * 3 + 2] = albedoBuffer[i].b;
+			// 2. Sanitize Albedo Data
+			Colour a = albedoBuffer[i];
+			if (std::isnan(a.r) || std::isnan(a.g) || std::isnan(a.b) ||
+				std::isinf(a.r) || std::isinf(a.g) || std::isinf(a.b)) {
+				a = Colour(0.5f, 0.5f, 0.5f);
+			}
+			albedoData[i * 3 + 0] = a.r;
+			albedoData[i * 3 + 1] = a.g;
+			albedoData[i * 3 + 2] = a.b;
 
-			normalData[i * 3 + 0] = normalBuffer[i].x;
-			normalData[i * 3 + 1] = normalBuffer[i].y;
-			normalData[i * 3 + 2] = normalBuffer[i].z;
+			// 3. Sanitize Normal Data
+			Vec3 n = normalBuffer[i];
+			if (std::isnan(n.x) || std::isnan(n.y) || std::isnan(n.z) ||
+				std::isinf(n.x) || std::isinf(n.y) || std::isinf(n.z)) {
+				n = Vec3(0.0f, 1.0f, 0.0f);
+			}
+			normalData[i * 3 + 0] = n.x;
+			normalData[i * 3 + 1] = n.y;
+			normalData[i * 3 + 2] = n.z;
 		}
 
+		std::cout << "Intel OIDN: Initializing..." << std::endl;
 		oidn::DeviceRef device = oidn::newDevice(oidn::DeviceType::CPU);
 		device.commit();
+
 		oidn::FilterRef filter = device.newFilter("RT");
 		filter.setImage("color", colorData.data(), oidn::Format::Float3, width, height);
 		filter.setImage("albedo", albedoData.data(), oidn::Format::Float3, width, height);
@@ -295,7 +319,18 @@ public:
 		filter.setImage("output", outputData.data(), oidn::Format::Float3, width, height);
 		filter.set("hdr", true);
 		filter.commit();
+
+		std::cout << "Intel OIDN: Executing filter..." << std::endl;
 		filter.execute();
+
+		// NEW: Catch and print any internal OIDN crashes!
+		const char* errorMessage;
+		if (device.getError(errorMessage) != oidn::Error::None) {
+			std::cout << "\n>>> OIDN FATAL ERROR: " << errorMessage << " <<<\n" << std::endl;
+		}
+		else {
+			std::cout << "Intel OIDN: Success!" << std::endl;
+		}
 
 		for (int i = 0; i < numPixels; i++) {
 			outputBuffer[i].r = outputData[i * 3 + 0];
