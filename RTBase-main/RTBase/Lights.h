@@ -138,54 +138,140 @@ class EnvironmentMap : public Light
 {
 public:
 	Texture* env;
+
+	std::vector<float> marginalCDF;
+	std::vector<std::vector<float>> conditionalCDF;
+	float mapIntegral;
+
 	EnvironmentMap(Texture* _env)
 	{
 		env = _env;
+
+		int w = env->width;
+		int h = env->height;
+
+		marginalCDF.resize(h, 0.0f);
+		conditionalCDF.resize(h, std::vector<float>(w, 0.0f));
+
+		// build
+		for (int y = 0; y < h; ++y) {
+			float v = (float(y) + 0.5f) / float(h);
+			float sinTheta = sinf(M_PI * v); 
+
+			float rowSum = 0.0f;
+			for (int x = 0; x < w; ++x) {
+				float lum = env->texels[y * w + x].Lum();
+				rowSum += lum * sinTheta;
+				conditionalCDF[y][x] = rowSum;
+			}
+
+			// normalise row
+			if (rowSum > 0.0f) {
+				for (int x = 0; x < w; ++x) {
+					conditionalCDF[y][x] /= rowSum;
+				}
+			}
+			else {
+				// fallback if black
+				for (int x = 0; x < w; ++x) {
+					conditionalCDF[y][x] = float(x + 1) / float(w);
+				}
+			}
+
+			marginalCDF[y] = (y == 0) ? rowSum : marginalCDF[y - 1] + rowSum;
+		}
+
+		mapIntegral = marginalCDF[h - 1];
+
+		// normalise column
+		if (mapIntegral > 0.0f) {
+			for (int y = 0; y < h; ++y) {
+				marginalCDF[y] /= mapIntegral;
+			}
+		}
+		else {
+			for (int y = 0; y < h; ++y) {
+				marginalCDF[y] = float(y + 1) / float(h);
+			}
+		}
 	}
+
 	Vec3 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf)
 	{
-		// Assignment: Update this code to importance sampling lighting based on luminance of each pixel
-		/*Vec3 wi = SamplingDistributions::uniformSampleSphere(sampler->next(), sampler->next());
-		pdf = SamplingDistributions::uniformSpherePDF(wi);
+		float r1 = sampler->next();
+		float r2 = sampler->next();
+
+		// pick random y
+		auto itY = std::lower_bound(marginalCDF.begin(), marginalCDF.end(), r1);
+		int y = std::min(int(itY - marginalCDF.begin()), env->height - 1);
+
+		// pick random x
+		auto itX = std::lower_bound(conditionalCDF[y].begin(), conditionalCDF[y].end(), r2);
+		int x = std::min(int(itX - conditionalCDF[y].begin()), env->width - 1);
+
+		// don't hit same pixel every time
+		float u = (float(x) + sampler->next()) / float(env->width);
+		float v = (float(y) + sampler->next()) / float(env->height);
+
+		// convert 2d to 3d
+		float phi = u * 2.0f * M_PI;
+		float theta = v * M_PI;
+
+		Vec3 wi;
+		wi.y = cosf(theta);
+		wi.x = sinf(theta) * cosf(phi);
+		wi.z = sinf(theta) * sinf(phi);
+
+		pdf = PDF(shadingData, wi);
 		reflectedColour = evaluate(wi);
-		return wi;*/
 
-		Vec3 wiLocal = SamplingDistributions::cosineSampleHemisphere(sampler->next(), sampler->next());
-
-		Vec3 wiWorld = shadingData.frame.toWorld(wiLocal).normalize();
-
-		pdf = PDF(shadingData, wiWorld);
-		reflectedColour = evaluate(wiWorld);
-
-		return wiWorld;
+		return wi;
 	}
+
 	Colour evaluate(const Vec3& wi)
 	{
 		float u = atan2f(wi.z, wi.x);
 		u = (u < 0.0f) ? u + (2.0f * M_PI) : u;
 		u = u / (2.0f * M_PI);
-		float v = acosf(wi.y) / M_PI;
+
+		// clamp to prevent nan errors
+		float v = acosf(std::max(-1.0f, std::min(1.0f, wi.y))) / M_PI;
+
 		return env->sample(u, v);
 	}
+
 	float PDF(const ShadingData& shadingData, const Vec3& wi)
 	{
 		// Assignment: Update this code to return the correct PDF of luminance weighted importance sampling
-		//return SamplingDistributions::uniformSpherePDF(wi);
-		Vec3 wiLocal = shadingData.frame.toLocal(wi);
-		if (wiLocal.z <= 0.0f) return 0.0f;
-		return wiLocal.z / M_PI;
+
+		if (mapIntegral <= 0.0f) return 1.0f / (4.0f * M_PI); 
+
+		float u = atan2f(wi.z, wi.x);
+		u = (u < 0.0f) ? u + (2.0f * M_PI) : u;
+		u = u / (2.0f * M_PI);
+		float v = acosf(std::max(-1.0f, std::min(1.0f, wi.y))) / M_PI;
+
+		float lum = env->sample(u, v).Lum();
+
+		// return probability
+		float pdf = (lum / mapIntegral) * (env->width * env->height) / (2.0f * M_PI * M_PI);
+
+		return pdf;
 	}
+
 	bool isArea()
 	{
 		return false;
 	}
+
 	Vec3 normal(const ShadingData& shadingData, const Vec3& wi)
 	{
 		return -wi;
 	}
+
 	float totalIntegratedPower()
 	{
-		float total = 0;
+		/*float total = 0;
 		for (int i = 0; i < env->height; i++)
 		{
 			float st = sinf(((float)i / (float)env->height) * M_PI);
@@ -195,8 +281,11 @@ public:
 			}
 		}
 		total = total / (float)(env->width * env->height);
-		return total * 4.0f * M_PI;
+		return total * 4.0f * M_PI;*/
+
+		return mapIntegral * (4.0f * M_PI);
 	}
+
 	Vec3 samplePositionFromLight(Sampler* sampler, float& pdf)
 	{
 		// Samples a point on the bounding sphere of the scene. Feel free to improve this.
@@ -206,11 +295,14 @@ public:
 		pdf = 1.0f / (4 * M_PI * SQ(use<SceneBounds>().sceneRadius));
 		return p;
 	}
+
 	Vec3 sampleDirectionFromLight(Sampler* sampler, float& pdf)
 	{
 		// Replace this tabulated sampling of environment maps
-		Vec3 wi = SamplingDistributions::uniformSampleSphere(sampler->next(), sampler->next());
+		/*Vec3 wi = SamplingDistributions::uniformSampleSphere(sampler->next(), sampler->next());
 		pdf = SamplingDistributions::uniformSpherePDF(wi);
-		return wi;
+		return wi;*/
+		Colour reflectedColor;
+		return sample(ShadingData(), sampler, reflectedColor, pdf);
 	}
 };

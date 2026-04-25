@@ -176,6 +176,13 @@ public:
 			L.r < 0.0f || L.g < 0.0f || L.b < 0.0f) {
 			return;
 		}
+
+		Colour clampedL = L;
+		float maxRadiance = 10.0f;
+		clampedL.r = std::min(clampedL.r, maxRadiance);
+		clampedL.g = std::min(clampedL.g, maxRadiance);
+		clampedL.b = std::min(clampedL.b, maxRadiance);
+
 		// Code to splat a smaple with colour L into the image plane using an ImageFilter
 		float filterWeights[25]; // Storage to cache weights
 		unsigned int indices[25]; // Store indices to minimize computations
@@ -196,7 +203,7 @@ public:
 		}
 		if (total > 0.0f) {
 			for (int i = 0; i < used; i++) {
-				film[indices[i]] = film[indices[i]] + (L * filterWeights[i] / total);
+				film[indices[i]] = film[indices[i]] + (clampedL * filterWeights[i] / total);
 			}
 		}
 	}
@@ -271,65 +278,50 @@ public:
 		int numPixels = width * height;
 
 		std::vector<float> colorData(numPixels * 3);
-		std::vector<float> albedoData(numPixels * 3);
-		std::vector<float> normalData(numPixels * 3);
 		std::vector<float> outputData(numPixels * 3);
 
 		for (int i = 0; i < numPixels; ++i) {
 			Colour c = film[i] / (float)SPP;
 
-			// 1. Sanitize Color Data
+			// 1. ABSOLUTE SANITIZATION (Checks every single channel)
 			if (std::isnan(c.r) || std::isnan(c.g) || std::isnan(c.b) ||
 				std::isinf(c.r) || std::isinf(c.g) || std::isinf(c.b)) {
 				c = Colour(0.0f, 0.0f, 0.0f);
 			}
+
+			// 2. EXTREME FIREFLY CLAMP (Crush anything brighter than 2.0)
+			c.r = std::min(c.r, 2.0f);
+			c.g = std::min(c.g, 2.0f);
+			c.b = std::min(c.b, 2.0f);
+
 			colorData[i * 3 + 0] = c.r;
 			colorData[i * 3 + 1] = c.g;
 			colorData[i * 3 + 2] = c.b;
-
-			// 2. Sanitize Albedo Data
-			Colour a = albedoBuffer[i];
-			if (std::isnan(a.r) || std::isnan(a.g) || std::isnan(a.b) ||
-				std::isinf(a.r) || std::isinf(a.g) || std::isinf(a.b)) {
-				a = Colour(0.5f, 0.5f, 0.5f);
-			}
-			albedoData[i * 3 + 0] = a.r;
-			albedoData[i * 3 + 1] = a.g;
-			albedoData[i * 3 + 2] = a.b;
-
-			// 3. Sanitize Normal Data
-			Vec3 n = normalBuffer[i];
-			if (std::isnan(n.x) || std::isnan(n.y) || std::isnan(n.z) ||
-				std::isinf(n.x) || std::isinf(n.y) || std::isinf(n.z)) {
-				n = Vec3(0.0f, 1.0f, 0.0f);
-			}
-			normalData[i * 3 + 0] = n.x;
-			normalData[i * 3 + 1] = n.y;
-			normalData[i * 3 + 2] = n.z;
 		}
 
-		std::cout << "Intel OIDN: Initializing..." << std::endl;
+		// NEW: Giant print statement to prove Visual Studio compiled it!
+		std::cout << "\n======================================" << std::endl;
+		std::cout << ">>> RUNNING DENOISER V3 (COLOR ONLY) <<<" << std::endl;
+		std::cout << "======================================" << std::endl;
+
 		oidn::DeviceRef device = oidn::newDevice(oidn::DeviceType::CPU);
 		device.commit();
 
 		oidn::FilterRef filter = device.newFilter("RT");
+
 		filter.setImage("color", colorData.data(), oidn::Format::Float3, width, height);
-		filter.setImage("albedo", albedoData.data(), oidn::Format::Float3, width, height);
-		filter.setImage("normal", normalData.data(), oidn::Format::Float3, width, height);
 		filter.setImage("output", outputData.data(), oidn::Format::Float3, width, height);
 		filter.set("hdr", true);
 		filter.commit();
 
-		std::cout << "Intel OIDN: Executing filter..." << std::endl;
 		filter.execute();
 
-		// NEW: Catch and print any internal OIDN crashes!
 		const char* errorMessage;
 		if (device.getError(errorMessage) != oidn::Error::None) {
-			std::cout << "\n>>> OIDN FATAL ERROR: " << errorMessage << " <<<\n" << std::endl;
+			std::cout << ">>> OIDN FATAL ERROR: " << errorMessage << " <<<" << std::endl;
 		}
 		else {
-			std::cout << "Intel OIDN: Success!" << std::endl;
+			std::cout << ">>> OIDN SUCCESS! <<<" << std::endl;
 		}
 
 		for (int i = 0; i < numPixels; i++) {

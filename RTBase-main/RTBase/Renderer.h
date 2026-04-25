@@ -40,6 +40,9 @@ public:
 		numProcs = sysInfo.dwNumberOfProcessors;
 		threads = new std::thread*[numProcs];
 		samplers = new MTRandom[numProcs];
+		for (int i = 0; i < numProcs; i++) {
+			samplers[i].generator.seed(i + 1337);
+		}
 		clear();
 	}
 	void clear()
@@ -213,7 +216,7 @@ public:
 					VPL vpl;
 					vpl.position = sd.x;
 					vpl.normal = sd.sNormal;
-					vpl.intensity = intensity;
+					vpl.intensity = intensity;  
 
 					if (std::isnan(intensity.r) || std::isnan(intensity.g) || std::isnan(intensity.b) ||
 						std::isinf(intensity.r) || std::isinf(intensity.g) || std::isinf(intensity.b)) {
@@ -268,34 +271,41 @@ public:
 
 		Colour light(0.0f, 0.0f, 0.0f);
 
-		int randomVplIndex = std::min((int)(sampler->next() * vpls.size()), (int)vpls.size() - 1);
-		VPL vpl = vpls[randomVplIndex];
+		int vplsToTest = std::min(256, (int)vpls.size());
 
-		// distance/direction
-		Vec3 wi = vpl.position - shadingData.x;
-		float dist = wi.length();
-		wi = wi.normalize();
+		// spread evenly to test
+		int step = vpls.size() / vplsToTest;
 
-		// shadow ray
-		if (!scene->visible(shadingData.x, vpl.position)) {
-			return Colour(0.0f, 0.0f, 0.0f);
+		for (int i = 0; i < vplsToTest; i++) {
+			VPL vpl = vpls[i * step];
+
+			// distance/direction
+			Vec3 wi = vpl.position - shadingData.x;
+			float dist = wi.length();
+			wi = wi.normalize();
+
+			// shadow ray
+			if (!scene->visible(shadingData.x, vpl.position)) {
+				continue; // Missed, try the next VPL
+			}
+
+			// lamberts cosine law
+			float cosTheta = Dot(shadingData.sNormal, wi);
+			float cosThetaL = Dot(vpl.normal, -wi);
+
+			// accumulate clamped VPL light.
+			if (cosTheta > 0.0f && cosThetaL > 0.0f) {
+				float distSq = std::max(0.1f, dist * dist);
+				float g = (cosTheta * cosThetaL) / distSq;
+
+				// eval how mat reacts to light
+				Colour f = shadingData.bsdf->evaluate(shadingData, wi);
+
+				// Add it to the total, weighted by how many we tested
+				light = light + (vpl.intensity * f * g) * ((float)vpls.size() / (float)vplsToTest);
+			}
 		}
 
-		// lamberts cosine law
-		float cosTheta = Dot(shadingData.sNormal, wi);
-		float cosThetaL = Dot(vpl.normal, -wi);
-
-		// accumulate clamped VPL light.
-		if (cosTheta > 0.0f && cosThetaL > 0.0f) {
-			float distSq = std::max(0.1f, dist * dist);
-			float g = (cosTheta * cosThetaL) / distSq;
-
-			// eval how mat reacts to light
-			Colour f = shadingData.bsdf->evaluate(shadingData, wi);
-
-			light = light + (vpl.intensity * f * g) * (float)vpls.size();
-		}
-			
 		return light;
 	}
 	Colour computeDirect(ShadingData shadingData, Sampler* sampler)
@@ -466,8 +476,7 @@ public:
 		Colour directLight = computeDirect(shadingData, sampler);
 		directLight = directLight * pathThroughput;
 
-		Colour l = computeIndirect(shadingData, pathThroughput, depth, sampler);
-		//Colour l = computeIndirectVPL(shadingData, pathThroughput, depth, sampler);
+		Colour l = computeIndirectVPL(shadingData, pathThroughput, depth, sampler);
 		//Colour l = computeIndirect(shadingData, pathThroughput, depth, sampler);
 
 		return directLight + l;
@@ -539,7 +548,7 @@ public:
 	{
 
 		if (film->SPP == 0) {
-			genVPLs(1000, 5);
+			genVPLs(50000, 5);
 		}
 
 
@@ -551,7 +560,7 @@ public:
 		int tileY = (film->height + size - 1) / size;
 		int total = tileX * tileY;
 
-		int pathsPerTile = 1;
+		int pathsPerTile = 50000;
 		float totalLightPaths = (float)(tileX * tileY * pathsPerTile);
 
 		std::atomic<int> tileIndex(0);
@@ -605,9 +614,9 @@ public:
 
 						}
 					}
-					/*for (int p = 0; p < pathsPerTile; p++) {
+					for (int p = 0; p < pathsPerTile; p++) {
 						lightTrace(&samplers[i], totalLightPaths);
-					}*/
+					}
 				}
 			});
 		}
