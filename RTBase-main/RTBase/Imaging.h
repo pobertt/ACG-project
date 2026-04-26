@@ -278,18 +278,18 @@ public:
 		int numPixels = width * height;
 
 		std::vector<float> colorData(numPixels * 3);
+		std::vector<float> albedoData(numPixels * 3);
+		std::vector<float> normalData(numPixels * 3);
 		std::vector<float> outputData(numPixels * 3);
 
 		for (int i = 0; i < numPixels; ++i) {
 			Colour c = film[i] / (float)SPP;
 
-			// 1. ABSOLUTE SANITIZATION (Checks every single channel)
 			if (std::isnan(c.r) || std::isnan(c.g) || std::isnan(c.b) ||
 				std::isinf(c.r) || std::isinf(c.g) || std::isinf(c.b)) {
 				c = Colour(0.0f, 0.0f, 0.0f);
 			}
 
-			// 2. EXTREME FIREFLY CLAMP (Crush anything brighter than 2.0)
 			c.r = std::min(c.r, 2.0f);
 			c.g = std::min(c.g, 2.0f);
 			c.b = std::min(c.b, 2.0f);
@@ -297,12 +297,16 @@ public:
 			colorData[i * 3 + 0] = c.r;
 			colorData[i * 3 + 1] = c.g;
 			colorData[i * 3 + 2] = c.b;
+
+			albedoData[i * 3 + 0] = c.r;
+			albedoData[i * 3 + 1] = c.g;
+			albedoData[i * 3 + 2] = c.b;
+
+			normalData[i * 3 + 0] = c.r;
+			normalData[i * 3 + 1] = c.g;
+			normalData[i * 3 + 2] = c.b;
 		}
 
-		// NEW: Giant print statement to prove Visual Studio compiled it!
-		std::cout << "\n======================================" << std::endl;
-		std::cout << ">>> RUNNING DENOISER V3 (COLOR ONLY) <<<" << std::endl;
-		std::cout << "======================================" << std::endl;
 
 		oidn::DeviceRef device = oidn::newDevice(oidn::DeviceType::CPU);
 		device.commit();
@@ -310,19 +314,15 @@ public:
 		oidn::FilterRef filter = device.newFilter("RT");
 
 		filter.setImage("color", colorData.data(), oidn::Format::Float3, width, height);
+		filter.setImage("albedo", albedoData.data(), oidn::Format::Float3, width, height);
+		filter.setImage("normal", normalData.data(), oidn::Format::Float3, width, height);
 		filter.setImage("output", outputData.data(), oidn::Format::Float3, width, height);
+
 		filter.set("hdr", true);
 		filter.commit();
 
 		filter.execute();
 
-		const char* errorMessage;
-		if (device.getError(errorMessage) != oidn::Error::None) {
-			std::cout << ">>> OIDN FATAL ERROR: " << errorMessage << " <<<" << std::endl;
-		}
-		else {
-			std::cout << ">>> OIDN SUCCESS! <<<" << std::endl;
-		}
 
 		for (int i = 0; i < numPixels; i++) {
 			outputBuffer[i].r = outputData[i * 3 + 0];
