@@ -55,7 +55,7 @@ int main(int argc, char *argv[])
 	runTests();
 	
 	// Initialize default parameters "kitchen" or "cornell-box"
-	std::string sceneName = "car2";
+	std::string sceneName = "glass-of-water";
 	std::string filename = "C:/Users/u5730946/Documents/GitHub/ACG-project/GI.hdr";
 	unsigned int SPP = 8192;
 

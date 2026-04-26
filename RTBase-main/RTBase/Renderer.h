@@ -473,8 +473,8 @@ public:
 			return Colour(0.0f, 0.0f, 0.0f);
 		}
 
-		Colour directLight = computeDirectVPL(shadingData, sampler);
-		//Colour directLight = computeDirect(shadingData, sampler);
+		//Colour directLight = computeDirectVPL(shadingData, sampler);
+		Colour directLight = computeDirect(shadingData, sampler);
 		directLight = directLight * pathThroughput;
 
 		Colour l = computeIndirectVPL(shadingData, pathThroughput, depth, sampler);
@@ -549,7 +549,7 @@ public:
 	{
 
 		if (film->SPP == 0) {
-			genVPLs(1000, 5);
+			genVPLs(10, 5);
 		}
 
 
@@ -561,7 +561,7 @@ public:
 		int tileY = (film->height + size - 1) / size;
 		int total = tileX * tileY;
 
-		int pathsPerTile = 1000;
+		int pathsPerTile = 100;
 		float totalLightPaths = (float)(tileX * tileY * pathsPerTile);
 
 		std::atomic<int> tileIndex(0);
